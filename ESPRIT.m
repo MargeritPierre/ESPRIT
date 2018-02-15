@@ -502,20 +502,25 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
         K = Kstab(R,1:R) ;
         Kstab = sort(Kstab,2) ;
         % Figure
-            fig = figure('NumberTitle','off','Name','ESPRIT : STABILIZATION DIAGRAM. Click to select an other signal order. Double Click to select and quit.') ; %figure ;
-                axESTER = axes('outerposition',[0 0 .2 1]) ;
-                    plOrderLine = plot(axESTER,R0(R)*[1 1],[min(log10(ESTER(:))) max(log10(ESTER(:)))],'-.k','linewidth',1) ;
-                    plRLine = plot(axESTER,R0(R)*[1 1],[min(log10(ESTER(:))) max(log10(ESTER(:)))],'-.r','linewidth',1) ;
+            stab.fig = figure('NumberTitle','off','Name','ESPRIT : STABILIZATION DIAGRAM. Click to select an other signal order. Right Click to quit.') ; %figure ;
+            % Axes for the signal order selection Criterions
+                stab.axCrit = axes('outerposition',[0 0 .2 1]) ;
+                    stab.plOrderLine = plot(stab.axCrit,R0(R)*[1 1],[min(log10(ESTER(:))) max(log10(ESTER(:)))],'-.k','linewidth',1) ;
+                    stab.plRLine = plot(stab.axCrit,R0(R)*[1 1],[min(log10(ESTER(:))) max(log10(ESTER(:)))],'-.r','linewidth',1) ;
                     plot(R0,log10(ESTER),'.-','markersize',20,'linewidth',1) ;
                     set(gca,'view',[-90 90]) ;
                     box on
                     grid on
                     axis tight
-                axPoles = axes('outerposition',[.2 0 .8 1]) ;
-                    plot3(abs(real(Kstab)),repmat(R0(:),[1 max(R0)]),abs(imag(Kstab)./real(Kstab)),'+','markersize',8,'linewidth',1.5)
-                    axPoles.ZScale = 'log' ;
-                    axPoles.SortMethod = 'childorder' ;
-                axMean = axes('position',axPoles.Position) ;
+                    % Disable rotate3d
+                        hBehavior = hggetbehavior(stab.axCrit, 'Rotate3d');
+                        hBehavior.Enable = false ;
+            % Axes for the Poles
+                stab.axPoles = axes('outerposition',[.2 0 .8 1]) ;
+                    plot3(abs(real(Kstab)),repmat(R0(:),[1 max(R0)]),abs(imag(Kstab)./real(Kstab)),'.','markersize',13,'linewidth',1.5)
+                    stab.axPoles.ZScale = 'log' ;
+                    stab.axPoles.SortMethod = 'childorder' ;
+                stab.axMean = axes('position',stab.axPoles.Position) ;
                     meanFFTSignal = Signal ;
                     meanFFTSignal = fft(meanFFTSignal,[],2) ;
                     meanFFTSignal = abs(meanFFTSignal) ;
@@ -523,43 +528,74 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
                     plot((0:prod(Lk)-1)/prod(Lk)*2*pi,log10(meanFFTSignal),'k') ;
                     axis off
                     box on
-                set([axMean axPoles],'xscale','log')
-                %grid([axMean axPoles],'on') ;
-                set([axMean axPoles],'xlim',[1/prod(Lk)*2*pi/2 pi]) ;
-                set([axPoles],'ylim',[R0(1) R0(end)]) ;
-                global hlink , hlink = linkprop([axMean axPoles],'position') ;
-                uistack(axMean,'bottom') ;
-            plRPoles = plot3(axPoles,abs(real(Kstab(R,:))),R0(R)*ones(1,max(R0)),abs(imag(Kstab(R,:))./real(Kstab(R,:))),'or','linewidth',1.5) ;
-            plOrderPoles = plot3(axPoles,abs(real(Kstab(R,:))),R0(R)*ones(1,max(R0)),abs(imag(Kstab(R,:))./real(Kstab(R,:))),'.k','markersize',20) ;
-            fig.WindowButtonMotionFcn = @(src,evt)changeStabDiagOrder(Kstab,plOrderPoles,plOrderLine,plRPoles,plRLine,'move') ;
-            fig.WindowButtonDownFcn = @(src,evt)changeStabDiagOrder(Kstab,plOrderPoles,plOrderLine,plRPoles,plRLine,'click') ;
-            uiwait(fig) ;
+            % Link axes
+                set([stab.axMean stab.axPoles],'xscale','log')
+                set([stab.axMean stab.axPoles],'xlim',[1/prod(Lk)*2*pi/2 pi]) ;
+                set([stab.axPoles],'ylim',[R0(1) R0(end)]) ;
+                global hlink , hlink = linkprop([stab.axMean stab.axPoles],'position') ;
+                linkaxes([stab.axMean stab.axPoles],'x') ;
+                uistack(stab.axMean,'bottom') ;
+            % Poles Chosen at the end
+                stab.plRPoles = plot3(stab.axPoles,abs(real(Kstab(R,:))),R0(R)*ones(1,max(R0)),abs(imag(Kstab(R,:))./real(Kstab(R,:))),'or','linewidth',1.5) ;
+            % Poles at the mouse position
+                stab.plOrderPoles = plot3(stab.axPoles,abs(real(Kstab(R,:))),R0(R)*ones(1,max(R0)),abs(imag(Kstab(R,:))./real(Kstab(R,:))),'.k','markersize',20) ;
+            % Figure Callbacks setting
+                stab.fig.WindowButtonMotionFcn = @(src,evt)changeStabDiagOrder(Kstab,stab,'move') ;
+                stab.fig.WindowButtonDownFcn = @(src,evt)changeStabDiagOrder(Kstab,stab,'click') ;
+            % Buttons for the view
+                stab.btnSwitch = uicontrol(stab.fig,'style','pushbutton') ;
+                stab.btnSwitch.String = 'Frequency' ;
+                stab.btnSwitch.TooltipString = 'Switch Representation Mode' ;
+                stab.btnSwitch.Units = 'normalized' ;
+                margin = 0.003 ;
+                btnWidth = 0.08 ;
+                btnHeight = 0.03 ;
+                stab.btnSwitch.Position = [1-btnWidth-margin 1-btnHeight-margin btnWidth btnHeight] ;
+                stab.btnSwitch.Callback = @(src,evt)btnSwitchCallback(stab) ;
+            % Wait for the figure to be closed
+                uiwait(stab.fig) ;
     end
 
 % CHANGE THE STABILIZATION DIAGRAM ORDER WITH MOUSE POSITION
-    function changeStabDiagOrder(Kstab,plOrderPoles,plOrderLine,plRPoles,plRLine,event)
-        mouseOrder = plOrderLine.Parent.CurrentPoint(1,1) ;
-        selectOrder = min(max(R0(1),round(mouseOrder)),R0(end)) ;
-        [~,order] = min(abs(R0-selectOrder)) ;
-        order = order(1) ;
-        plOrderLine.XData = R0(order)*[1 1] ;
-        plOrderPoles.XData = abs(real(Kstab(order,:))) ;
-        plOrderPoles.YData = R0(order)*ones(1,max(R0(:))) ;
-        plOrderPoles.ZData = abs(imag(Kstab(order,:))./real(Kstab(order,:))) ;
-        switch event
-            case 'move'
-            case 'click'
-                R = order ;
-                K = Kstab(R,1:R) ;
-                plRLine.XData = R0(order)*[1 1] ;
-                plRPoles.XData = abs(real(Kstab(order,:))) ;
-                plRPoles.YData = R0(order)*ones(1,max(R0(:))) ;
-                plRPoles.ZData = abs(imag(Kstab(order,:))./real(Kstab(order,:))) ;
-        end
-        fig = plOrderLine.Parent.Parent ;
-        switch fig.SelectionType
-            case 'open'
-                close(fig) ;
+    function changeStabDiagOrder(Kstab,stab,event)
+        % Get the order given by the mouse position
+            mouseOrder = stab.axCrit.CurrentPoint(1,1) ;
+            selectOrder = min(max(R0(1),round(mouseOrder)),R0(end)) ;
+            [~,order] = min(abs(R0-selectOrder)) ;
+            order = order(1) ;
+        % Retrieve identified poles
+            stab.plOrderLine.XData = R0(order)*[1 1] ;
+            stab.plOrderPoles.XData = abs(real(Kstab(order,:))) ;
+            stab.plOrderPoles.YData = R0(order)*ones(1,max(R0(:))) ;
+            stab.plOrderPoles.ZData = abs(imag(Kstab(order,:))./real(Kstab(order,:))) ;
+        % If Clicked, change the final output poles
+            switch event
+                case 'move'
+                case 'click'
+                    R = order ;
+                    K = Kstab(R,1:R) ;
+                    stab.plRLine.XData = R0(order)*[1 1] ;
+                    stab.plRPoles.XData = abs(real(Kstab(order,:))) ;
+                    stab.plRPoles.YData = R0(order)*ones(1,max(R0(:))) ;
+                    stab.plRPoles.ZData = abs(imag(Kstab(order,:))./real(Kstab(order,:))) ;
+            end
+        % Close the figure if double clicked
+            switch stab.fig.SelectionType
+                case 'open'
+                case 'alt'
+                    close(stab.fig) ;
+            end
+    end
+
+% CHANGE STABIL. DIAGRAM ROTATION
+    function btnSwitchCallback(stab)
+        switch stab.btnSwitch.String
+            case 'Frequency' % switch to Damping
+                stab.axPoles.View = [0 0] ;
+                stab.btnSwitch.String = 'Damping' ;
+            case 'Damping' % switch to Frequency
+                stab.axPoles.View = [0 90] ;
+                stab.btnSwitch.String = 'Frequency' ;
         end
     end
 
