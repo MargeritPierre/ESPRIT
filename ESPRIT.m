@@ -18,6 +18,7 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
 %           - along DIMS_P : reduce the size of Css. However, U is estimated at all points.
 %       SHIFTS : for multiresolution (eye(length(DIMS_K)))
 %       DEBUG : bool to prompt procedure state (false)
+%       STABILDIAG : bool to plot the stabilization diagram (false)
 %
 %   varargout : 
 %       K : extracted complex wavevectors (size : [length(DIMS_K) R])
@@ -96,13 +97,13 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
     
     % Sub-Hankel matrices shapes (Kk rows, Mk columns)
         DECIM_K = DECIM(DIMS_K) ;
-        Kk = zeros([1 length(DIMS_K)]) ;
+        Kk = zeros([1 length(DIMS_K)]) ; % max size of (signal+noise) subspace
         Mk = zeros([1 length(DIMS_K)]) ;
         isCOS = false([1 length(DIMS_K)]) ; % IS COSINUS SEARCHED ?
         for d = 1:length(DIMS_K)
             switch lower(FUNC(d,:))
                 case 'exp'
-                    Kk(d) = floor((Lk(d)+DECIM_K(d))./(1+DECIM_K(d))) ; % max size of (signal+noise) subspace
+                    Kk(d) = floor((Lk(d)+DECIM_K(d))./(1+DECIM_K(d))) ;
                     Mk(d) = Lk(d) - DECIM_K(d).*(Kk(d)-1) ;
                 case 'cos' % /!\ decimation not included !
                     Kk(d) = floor((Lk(d)+1)/3) ;
@@ -121,7 +122,10 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
                 case 'exp'
                     subIndH{d,1} = (1:DECIM_K(d):DECIM_K(d)*(Kk(d)-1)+1)'*ones(1,Mk(d)) + ones(Kk(d),1)*(0:Mk(d)-1) ;
                 case 'cos' % /!\ decimation not included !
-                    subIndH{d,1} = flipud(hankel(0:Kk(d)-1,Kk(d)-1:Lk(d)-Kk(d)-1)) + 1 ;
+                    % HANKEL VERSION
+                        %subIndH{d,1} = flipud(hankel(0:Kk(d)-1,Kk(d)-1:Lk(d)-Kk(d)-1)) + 1 ;
+                    % TOEPLITZ VERSION
+                        subIndH{d,1} = toeplitz(Kk(d):-1:1,Kk(d):Lk(d)-Kk(d)) ;
                     subIndH{d,2} = hankel(Kk(d):2*Kk(d)-1,2*Kk(d)-1:Lk(d)-1) + 1 ;
             end
         end
@@ -362,11 +366,15 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
             indDiag = repmat(eye(R0(r)),[1 size(SHIFTS,1)])==1 ;
             Z = reshape(PHI(indDiag),[R0(r) size(SHIFTS,1)]).' ;
         % Wavevectors in the SHIFT basis
-            K = log(Z)/1i ;
+            shiftsCOS = logical(repmat(isCOS(:)',[size(SHIFTS,1) 1])) ;
+            %K = log(Z)/1i ;
+            K = zeros(size(Z)) ;
+            K(~shiftsCOS,:) = log(Z(~shiftsCOS,:))/1i ; % FUNC = 'EXP' ;
+            K(shiftsCOS,:) = acos(Z(shiftsCOS,:)) ; % FUNC = 'COS' ;
         % Wavevectors in the cartesian basis
             K = (SHIFTS*diag(DECIM_K))\(K) ;
         % If COSINUS searched...
-            K(isCOS,:) = acos(exp(1i*K(isCOS,:))) ;
+            %K(isCOS,:) = acos(exp(1i*K(isCOS,:))) ;
     end
 
 
@@ -459,12 +467,13 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
                             DEBUG = Value ;
                             paramSet(10) = true ;
                         otherwise
-                            errorInput(['Wrong argument name in n°',num2str(i),'.'])
+                            %errorInput(['Wrong argument name in n°',num2str(i),'.'])
+                            errorInput([Name,' (n°',num2str(i),').'])
                     end
                 end
             end
         % DEFAULT VALUES
-            if ~paramSet(1) ; DIMS_K = ndims(Signal) ; end
+            if ~paramSet(1) ; DIMS_K = find(size(Signal)~=1,1,'last') ; end
             if ~paramSet(2) ; FUNC = repmat('exp',[length(DIMS_K) 1]) ; end
             if ~paramSet(3) ; R0 = 1:floor(min(arrayfun(@(d)size(Signal,d),DIMS_K)/2)) ; end
             if ~paramSet(4) ; ESTER_THRS = 1 ; end
@@ -479,7 +488,7 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
 
 % PROMPT AN ERROR ON WRONG INPUT ARGUMENTS
     function errorInput(info) 
-        msg = ['Input arguments incorrect.',char(10)] ;
+        msg = ['Incorrect input argument : '] ;
         msg = [msg,info] ;
         error([msg,char(10)])
     end
