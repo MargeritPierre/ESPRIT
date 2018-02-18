@@ -33,6 +33,7 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
 %   - LS or TLS linear regression (FIT)
 %   - Multiple Invariance or Multiple Resolution (SHIFTS)
 %   - Decimate ESPRIT (DECIM)
+%   - Stabilization Diagram (STABILDIAG)
 %    
 % To go further on developments :
 %   (1) use of high-order cummulents
@@ -105,9 +106,9 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
                 case 'exp'
                     Kk(d) = floor((Lk(d)+DECIM_K(d))./(1+DECIM_K(d))) ;
                     Mk(d) = Lk(d) - DECIM_K(d).*(Kk(d)-1) ;
-                case 'cos' % /!\ decimation not included !
-                    Kk(d) = floor((Lk(d)+1)/3) ;
-                    Mk(d) = Lk(d)-2*Kk(d)+1 ;
+                case 'cos'
+                    Kk(d) = floor((Lk(d)+DECIM_K(d))/(2*DECIM_K(d)+1)) ;
+                    Mk(d) = Lk(d)-DECIM_K(d)*(2*Kk(d)-1) ;
                     isCOS(d) = true ;
             end
         end
@@ -121,12 +122,9 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
             switch lower(FUNC(d,:))
                 case 'exp'
                     subIndH{d,1} = (1:DECIM_K(d):DECIM_K(d)*(Kk(d)-1)+1)'*ones(1,Mk(d)) + ones(Kk(d),1)*(0:Mk(d)-1) ;
-                case 'cos' % /!\ decimation not included !
-                    % HANKEL VERSION
-                        %subIndH{d,1} = flipud(hankel(0:Kk(d)-1,Kk(d)-1:Lk(d)-Kk(d)-1)) + 1 ;
-                    % TOEPLITZ VERSION
-                        subIndH{d,1} = toeplitz(Kk(d):-1:1,Kk(d):Lk(d)-Kk(d)) ;
-                    subIndH{d,2} = hankel(Kk(d):2*Kk(d)-1,2*Kk(d)-1:Lk(d)-1) + 1 ;
+                case 'cos'
+                    subIndH{d,1} = ((Kk(d)-1)*DECIM_K(d)+1:-DECIM_K(d):1)'*ones(1,Mk(d)) + ones(Kk(d),1)*(0:Mk(d)-1) ;
+                    subIndH{d,2} = (Kk(d)*DECIM_K(d):DECIM_K(d):DECIM_K(d)*(2*Kk(d)-1))'*ones(1,Mk(d)) + ones(Kk(d),1)*(1:Mk(d)) ;
             end
         end
         
@@ -294,7 +292,7 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
                 else
                     Wup = Wp(indUp,:) ;
                 end
-            % Indices Up
+            % Indices Down
                 indDwn = true(size(indHbH_d{1,1},1),1) ; 
                 if any(isCOS.*shift) 
                     indTrDwn1 = true(size(indHbH_d{1,1},1),1) ; 
@@ -375,6 +373,7 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
             K = (SHIFTS*diag(DECIM_K))\(K) ;
         % If COSINUS searched...
             %K(isCOS,:) = acos(exp(1i*K(isCOS,:))) ;
+            %K(shiftsCOS,:) = acos(exp(1i*K(shiftsCOS,:))) ; % FUNC = 'COS' ;
     end
 
 
