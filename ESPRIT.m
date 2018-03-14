@@ -371,9 +371,6 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
             K(shiftsCOS,:) = acos(Z(shiftsCOS,:)) ; % FUNC = 'COS' ;
         % Wavevectors in the cartesian basis
             K = (SHIFTS*diag(DECIM_K))\(K) ;
-        % If COSINUS searched...
-            %K(isCOS,:) = acos(exp(1i*K(isCOS,:))) ;
-            %K(shiftsCOS,:) = acos(exp(1i*K(shiftsCOS,:))) ; % FUNC = 'COS' ;
     end
 
 
