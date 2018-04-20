@@ -12,13 +12,16 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
 %       DIMS_K : dimensions of the wavevectors (ndims(Signal))  
 %       FUNC : type of function searched 'exp' or 'cos' (repmat('exp',[length(DIMS_K) 1]))
 %       R0 : signal order candidates (1:floor(min(arrayfun(@(d)size(Signal,d),DIMS_K)/2)))
-%       FIT : 'LS' or 'TLS' (TLS)s
+%       FIT : 'LS' or 'TLS' (TLS)
 %       DECIM : decimation factors (ones(1,ndims(Signal)))
 %           - along DIMS_K : /!\ NYQUIST
 %           - along DIMS_P : reduce the size of Css. However, U is estimated at all points.
 %       SHIFTS : for multiresolution (eye(length(DIMS_K)))
 %       DEBUG : bool to prompt procedure state (false)
 %       STABILDIAG : bool to plot the stabilization diagram (false)
+%       MAC : correlation coefficient to link the poles by MAC values (0)
+%           - MAC == 0 : no MAC value computed
+%           - 0 < MAC < 1 : poles with corr > MAC are linked
 %
 %   varargout : 
 %       K : extracted complex wavevectors (size : [length(DIMS_K) R])
@@ -80,6 +83,8 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
         DIMS_P = setdiff(1:NDIMS,DIMS_K) ; % Dimensions of the isosurface
         Lk = SIZE(DIMS_K) ; % Number of points in the dimensions of the exponentials
         Lp = SIZE(DIMS_P) ; % Number of points in the dimensions of the isophase surface
+        % When only one point over the isophase surface
+            if isempty(DIMS_P) ; Lp = 1 ; end
     
     % Reshaping the signal
         Signal = permute(Signal,[DIMS_P DIMS_K]) ; % Sort dimensions
@@ -94,7 +99,7 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
         
         
 % HANKEL MATRIX BUILDING
-    if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Hankel Matrix Construction : ') ; lastTime = tic ; end
+    if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Hankel Matrix Initialization : ') ; lastTime = tic ; end
     
     % Sub-Hankel matrices shapes (Kk rows, Mk columns)
         DECIM_K = DECIM(DIMS_K) ;
@@ -146,15 +151,19 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
                 end
             end
             
-        % BUILD THE MATRIX
-            H = buildHbH ;
+        % Complete indices
+            indHbH = [] ;
+            n_indHbH = [] ;
+            indP = [] ;
+            indicesHbH ;
+            
         
         
         
 % AUTOCOVARIANCE MATRIX
     if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Computing of Css : ') ; lastTime = tic ; end
-
-        Css = H*H'/(prod(Mk)*prod(Lp)) ;
+  
+        Css = buildCss ;
         
         
         
@@ -184,6 +193,7 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
     
 % STABILIZATION DIAGRAM
     if STABILDIAG
+        MAC ;
         if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Stabilization Diagram : ') ; lastTime = tic ; end
         stabilizationDiagram() ;
     end
@@ -209,8 +219,8 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
 % FUNCTIONS FOR ESPRIT
 % ===================================================================================================================
 
-% HANKEL-BLOCK-HANKEL MATRIX
-    function H = buildHbH
+% HANKEL-BLOCK-HANKEL MATRIX INDICES
+    function indicesHbH
         % Decimation in the isosurface points
             indP = 1:size(Signal,1) ;
             DECIM_P = DECIM(DIMS_P) ;
@@ -251,17 +261,23 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
                         end
                     end
             end
-        % HBH BUILD
+    end
+
+% BUILD THE CSS MATRIX
+    function Css = buildCss
         % Stack The HbH matrices by points of isosurface
-            H = zeros(prod(Kk),prod(Mk)*length(indP)) ;
+            Css = zeros(prod(Kk),prod(Kk)) ;
             for p = 1:length(indP)
                 sig = Signal(indP(p),:) ;
                 SIG = 0 ;
                 for i = 1:n_indHbH
                     SIG = SIG + sig(indHbH{i}) ;
                 end
-                H(:,prod(Mk)*(p-1)+(1:prod(Mk))) = SIG/n_indHbH ;
+                SIG = SIG/n_indHbH ;
+                Css = Css + SIG*SIG' ;
             end
+        % Normalize
+            Css = Css/(prod(Mk)*prod(Lp)) ;
     end
         
         
@@ -364,7 +380,8 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
             indDiag = repmat(eye(R0(r)),[1 size(SHIFTS,1)])==1 ;
             Z = reshape(PHI(indDiag),[R0(r) size(SHIFTS,1)]).' ;
         % Wavevectors in the SHIFT basis
-            shiftsCOS = logical(repmat(isCOS(:)',[size(SHIFTS,1) 1])) ;
+            %shiftsCOS = logical(repmat(isCOS(:)',[size(SHIFTS,1) 1])) ;
+            shiftsCOS = logical(repmat(isCOS(:),[1 1])) ;
             %K = log(Z)/1i ;
             K = zeros(size(Z)) ;
             K(~shiftsCOS,:) = log(Z(~shiftsCOS,:))/1i ; % FUNC = 'EXP' ;
@@ -459,9 +476,12 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
                         case 'STABILDIAG'
                             STABILDIAG = Value ;
                             paramSet(9) = true ;
+                        case 'MAC'
+                            MAC = Value ;
+                            paramSet(10) = true ;
                         case 'DEBUG'
                             DEBUG = Value ;
-                            paramSet(10) = true ;
+                            paramSet(11) = true ;
                         otherwise
                             %errorInput(['Wrong argument name in n°',num2str(i),'.'])
                             errorInput([Name,' (n°',num2str(i),').'])
@@ -478,7 +498,8 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
             if ~paramSet(7) ; SHIFTS = eye(length(DIMS_K)) ; end
             if ~paramSet(8) ; CHOICE = 'auto' ; end
             if ~paramSet(9) ; STABILDIAG = false ; end
-            if ~paramSet(10) ; DEBUG = false ; end
+            if ~paramSet(10) ; MAC = false ; end
+            if ~paramSet(11) ; DEBUG = false ; end
     end
 
 
@@ -499,13 +520,46 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
 % PLOT THE STABILIZATION DIAGRAM
     function stabilizationDiagram()
         if length(DIMS_K)>1 ; warning('Stabilization Diagram is available for 1D-ESPRIT only.') ; return ; end
-        Kstab = zeros(length(R0),max(R0))*NaN ;
-        for r = 1:length(R0)
-            extractPoles(r) ; 
-            Kstab(r,1:R0(r)) = K ;
-        end
-        K = Kstab(R,1:R) ;
-        Kstab = sort(Kstab,2) ;
+        % Compute All the Poles for All Signal Orders
+            Kstab = zeros(length(R0),max(R0))*NaN*(1+1i) ;
+            for r = 1:length(R0)
+                extractPoles(r) ; 
+                Kstab(r,1:R0(r)) = K ;
+            end
+        % Sort the poles
+            if ~MAC % Simply sort by value
+                Kstab = sort(Kstab,2) ;
+            else % Sort with MACs
+                % Compute all Modes for all Mode Orders
+                    Ustab = zeros(prod(Lp),length(R0),max(R0))*NaN*(1+1i) ; % dims : [Point order pole]
+                    wtbr = waitbar(0,'Computing Modes...') ;
+                    for r = 1:length(R0)
+                        K = Kstab(r,1:R0(r)) ;
+                        computeU ;
+                        Ustab(:,r,1:R0(r)) = reshape(U,[prod(Lp),R0(r)]) ;
+                        wtbr = waitbar(r/length(R0),wtbr) ;
+                    end
+                    delete(wtbr) ; drawnow ;
+                % Compute MAC Values
+                    K_MAClinks = [] ;
+                    OR_MAClinks = [] ;
+                    for or = length(R0)-1:-1:1 ;
+                        U1 = squeeze(Ustab(:,or+1,1:R0(or+1))) ;
+                        U2 = squeeze(Ustab(:,or,1:R0(or))) ;
+                        mac = abs(U2'*U1)./sqrt(sum(abs(U2).^2,1)'*sum(abs(U1).^2,1)) ;
+                        for rr = 1:or
+                            maxMAC = max(mac(:)) ;
+                            if maxMAC<MAC ; break ; end
+                            [rmax,cmax] = find(mac==maxMAC) ;
+                            K_MAClinks = [K_MAClinks ; [Kstab(or+1,cmax(1)) Kstab(or,rmax(1))]] ;
+                            OR_MAClinks = [OR_MAClinks ; [or+1 or]] ;
+                            mac(:,cmax(1)) = nan ;
+                            mac(rmax(1),:) = nan ;
+                        end
+                    end
+            end
+        % Backup the current poles choice
+            K = Kstab(R,1:R) ;
         % Figure
             stab.fig = figure('NumberTitle','off','Name','ESPRIT : STABILIZATION DIAGRAM. Click to select an other signal order. Right Click to quit.') ; %figure ;
             % Axes for the signal order selection Criterions
@@ -522,6 +576,7 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
                         hBehavior.Enable = false ;
             % Axes for the Poles
                 stab.axPoles = axes('outerposition',[.2 0 .8 1]) ;
+                    plot3(abs(real(K_MAClinks')),OR_MAClinks',abs(imag(K_MAClinks')./real(K_MAClinks')),'-k','linewidth',.5)
                     plot3(abs(real(Kstab)),repmat(R0(:),[1 max(R0)]),abs(imag(Kstab)./real(Kstab)),'.','markersize',13,'linewidth',1.5)
                     stab.axPoles.ZScale = 'log' ;
                     stab.axPoles.SortMethod = 'childorder' ;
@@ -535,7 +590,10 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
                     box on
             % Link axes
                 set([stab.axMean stab.axPoles],'xscale','log')
-                set([stab.axMean stab.axPoles],'xlim',[1/prod(Lk)*2*pi/2 pi]) ;
+                % Limits
+                    %set([stab.axMean stab.axPoles],'xlim',[1/prod(Lk)*2*pi/2 pi]) ;
+                    w = abs(real(Kstab(:))) ;
+                    set([stab.axMean stab.axPoles],'xlim',[min(w(w~=0)) max(w)].*[0.9 1.1]) ;
                 set([stab.axPoles],'ylim',[R0(1) R0(end)]) ;
                 global hlink , hlink = linkprop([stab.axMean stab.axPoles],'position') ;
                 linkaxes([stab.axMean stab.axPoles],'x') ;
