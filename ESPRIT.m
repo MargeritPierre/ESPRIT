@@ -200,7 +200,7 @@ function OUT = ESPRIT(Signal,varargin)
             end
         else % Approximate with one QR iteration (Badeau-style)
             Cxy = Css*W0 ;
-            [W,R] = qr(Cxy,0) ;
+            [W,~] = qr(Cxy,0) ;
             lambda = diag(W'*Css*W) ;
         end
     % SORT EIGENVALUES IN DESCENDING ORDER
@@ -226,7 +226,7 @@ function OUT = ESPRIT(Signal,varargin)
                     CRIT = max(ESTER,[],1) ;
                     %CRIT = mean(ESTER,1) ;
             case 'MDF'
-                MDF = (D(1:end-1)-D(2:end))./D(1:end-1) ;
+                MDF = (lambda(1:end-1)-lambda(2:end))./lambda(1:end-1) ;
                 CRIT = [MDF ; 0] ;
         end
     % CHOOSE THE SIGNAL ORDER
@@ -267,8 +267,8 @@ function OUT = ESPRIT(Signal,varargin)
         OUT.lambda = lambda ;
     % Signal Order Criterion
         OUT.CRIT = CRIT ;
-        OUT.ESTER = ESTER ;
-        OUT.MDF = MDF ;
+        %OUT.ESTER = ESTER ;
+        %OUT.MDF = MDF ;
     
 
 % END OF THE PROCEDURE
