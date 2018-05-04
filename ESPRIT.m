@@ -15,6 +15,7 @@ function OUT = ESPRIT(Signal,varargin)
 %       DIMS_K : dimensions of the wavevectors (ndims(Signal))  
 %       FUNC : type of function searched 'exp' or 'cos' (repmat('exp',[length(DIMS_K) 1]))
 %       R0 : signal order candidates (1:floor(min(arrayfun(@(d)size(Signal,d),DIMS_K)/2)))
+%       K0 : length(s) of the signal that gives the size of the autocovariance matrix ([] for an auto choice)
 %       FIT : 'LS' or 'TLS' (TLS)
 %       DECIM : decimation factors (ones(1,ndims(Signal)))
 %           - along DIMS_K : /!\ NYQUIST
@@ -63,10 +64,13 @@ function OUT = ESPRIT(Signal,varargin)
         DIMS_K ; 
         FUNC ; 
         R0 ; 
+        K0 ;
         FIT ; 
         DECIM ; 
         SHIFTS ; 
         DEBUG ;
+        STABILDIAG ;
+        MAC ;
 
    % MANUAL INPUT MODIF. (for debugging)
         %SHIFTS = [1 1 1 ; 0 -1 1 ; 0 1 1] ;
@@ -115,11 +119,19 @@ function OUT = ESPRIT(Signal,varargin)
         for d = 1:length(DIMS_K)
             switch lower(FUNC(d,:))
                 case 'exp'
-                    Kk(d) = floor((Lk(d)+DECIM_K(d))./(1+DECIM_K(d))) ;
+                    if isempty(K0) 
+                        Kk(d) = floor((Lk(d)+DECIM_K(d))./(1+DECIM_K(d))) ;
+                    else
+                        Kk(d) = K0(d) ;
+                    end
                     Mk(d) = Lk(d) - DECIM_K(d).*(Kk(d)-1) ;
                 case 'cos'
-                    Kk(d) = floor((Lk(d)+DECIM_K(d))/(2*DECIM_K(d)+1)) ;
-                    Mk(d) = Lk(d)-DECIM_K(d)*(2*Kk(d)-1) ;
+                    if isempty(K0) 
+                        Kk(d) = floor((Lk(d)+DECIM_K(d))/(2*DECIM_K(d)+1)) ;
+                    else
+                        Kk(d) = K0(d) ;
+                    end
+                    Mk(d) = Lk(d) - DECIM_K(d)*(2*Kk(d)-1) ;
                     isCOS(d) = true ;
             end
         end
@@ -534,9 +546,15 @@ function OUT = ESPRIT(Signal,varargin)
                         case 'DEBUG'
                             DEBUG = Value ;
                             paramSet(11) = true ;
+<<<<<<< HEAD
                         case 'SOLVER'
                             SOLVER = Value ;
                             paramSet(13) = true ;
+=======
+                        case 'K0'
+                            K0 = Value ;
+                            paramSet(12) = true ;
+>>>>>>> 62310e05c503b58b727071988d37efd045699041
                         otherwise
                             %errorInput(['Wrong argument name in n°',num2str(i),'.'])
                             errorInput([Name,' (n°',num2str(i),').'])
@@ -555,9 +573,13 @@ function OUT = ESPRIT(Signal,varargin)
             if ~paramSet(9) ; STABILDIAG = false ; end
             if ~paramSet(10) ; MAC = false ; end
             if ~paramSet(11) ; DEBUG = false ; end
+<<<<<<< HEAD
             if ~paramSet(12) ; CRIT = 'MDF' ; end
             if ~paramSet(13) ; SOLVER = 'eig' ; end
             if ~paramSet(14) ; COMPUTE_U = true ; end
+=======
+            if ~paramSet(12) ; K0 = [] ; end
+>>>>>>> 62310e05c503b58b727071988d37efd045699041
     end
 
 
