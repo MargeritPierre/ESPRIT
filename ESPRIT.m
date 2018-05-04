@@ -1,4 +1,4 @@
-function [K,U,ESTER] = ESPRIT(Signal,varargin)
+function OUT = ESPRIT(Signal,varargin)
 %
 % ESPRIT Extract wavevectors from a signal
 %
@@ -8,7 +8,10 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
 %
 %   varargin parameters (and default values) : 
 %       CHOICE : 'auto' or 'manual' ('auto')
-%       ESTER_THRS : ester criterion threshold (1)
+%       SOLVER : 'eigs' or 'eig' ('eig') 
+%       CRITERION : 'ESTER' or 'MDF' ('MDF')
+%       CRIT_THRS : criterion threshold (1)
+%       COMPUTE_U : boolean to compute amplitudes (true)
 %       DIMS_K : dimensions of the wavevectors (ndims(Signal))  
 %       FUNC : type of function searched 'exp' or 'cos' (repmat('exp',[length(DIMS_K) 1]))
 %       R0 : signal order candidates (1:floor(min(arrayfun(@(d)size(Signal,d),DIMS_K)/2)))
@@ -53,7 +56,10 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
         parseInputs ; 
         varargin ;
         CHOICE ;
-        ESTER_THRS ; 
+        SOLVER ;
+        CRITERION ;
+        CRIT_THRS ; 
+        COMPUTE_U ;
         DIMS_K ; 
         FUNC ; 
         R0 ; 
@@ -169,28 +175,45 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
         
 % EIGENVALUE DECOMPOSITION        
     if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Eigendecomposition of Css : ') ; lastTime = tic ; end
-    % EIG
-        [W,D] = eig(Css,'vector') ;
-        [~,Ind] = sort(D,'descend') ;
-        W = W(:,Ind) ;
+    switch SOLVER
+        case 'eig'
+            [W,lambda] = eig(Css,'vector') ;
+            [~,Ind] = sort(lambda,'descend') ;
+            lambda = lambda(Ind) ;
+            W = W(:,Ind) ;
+        case 'eigs'
+            [W,lambda] = eigs(Css,max(R0),'lm') ;
+            lambda = diag(lambda) ;
+            [~,Ind] = sort(lambda,'descend') ;
+            lambda = lambda(Ind) ;
+            W = W(:,Ind) ;
+    end
         
         
-% ESTER CRITERION
-    if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   ESTER Criterion : ') ; lastTime = tic ; end
-    % Compute all errors
-        ESTER = zeros(size(SHIFTS,1),length(R0)) ;
-        for r = 1:length(R0)
-            for s = 1:size(SHIFTS,1)
-                ESTER(s,r) = ester(r,s) ;
-            end
+% SIGNAL ORGER CRITERION
+    if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Signal Order Criterion : ') ; lastTime = tic ; end
+    % COMPUTE THE CRITERION
+        switch CRITERION
+            case 'ESTER'
+                % Compute all errors
+                    ESTER = zeros(size(SHIFTS,1),length(R0)) ;
+                    for r = 1:length(R0)
+                        for s = 1:size(SHIFTS,1)
+                            ESTER(s,r) = ester(r,s) ;
+                        end
+                    end
+                % Compute the mean over shifts
+                    %CRIT = prod(ESTER,1) ;
+                    CRIT = max(ESTER,[],1) ;
+                    %CRIT = mean(ESTER,1) ;
+            case 'MDF'
+                MDF = (D(1:end-1)-D(2:end))./D(1:end-1) ;
+                CRIT = [MDF ; 0] ;
         end
-    % Compute the mean
-        %CRIT = prod(ESTER,1) ;
-        CRIT = max(ESTER,[],1) ;
-        %CRIT = mean(ESTER,1) ;
-    % CHOOSE THE ORDER
-        R = find(CRIT>=max(CRIT)*ESTER_THRS,1,'last') ;
+    % CHOOSE THE SIGNAL ORDER
+        R = find(CRIT>=max(CRIT)*CRIT_THRS,1,'last') ;
     
+        
 % STABILIZATION DIAGRAM
     if STABILDIAG
         MAC ;
@@ -206,13 +229,36 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
     
 % ESTIMATE AMPLITUDES
     if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Amplitude Estimation : ') ; lastTime = tic ; end
-    if (nargout>=2) ; computeU ; end
+    if COMPUTE_U ; computeU ; end
+        
+    
+% OUTPUT
+    if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Output : ') ; lastTime = tic ; end
+    % Results
+        OUT.K = K ;
+        OUT.U = U ;
+    % Sizes
+        OUT.Lp = Lp ;
+        OUT.Lk = Lk ;
+        OUT.Kk = Kk ;
+        OUT.Mk = Mk ;
+    % Subspace
+        OUT.Css = Css ;
+        OUT.W = W ;
+        OUT.lambda = lambda ;
+    % Signal Order Criterion
+        OUT.CRIT = CRIT ;
+        OUT.ESTER = ESTER ;
+        OUT.MDF = MDF ;
     
 
 % END OF THE PROCEDURE
     if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('---------------------------------') ; end
 
 
+    
+    
+    
     
     
 % ===================================================================================================================    
@@ -458,9 +504,15 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
                         case 'R0'
                             R0 = Value ;
                             paramSet(3) = true ;
-                        case 'ESTER_THRS'
-                            ESTER_THRS = Value ;
+                        case 'CRITERION'
+                            CRITERION = Value ;
+                            paramSet(12) = true ;
+                        case 'CRIT_THRS'
+                            CRIT_THRS = Value ;
                             paramSet(4) = true ;
+                        case 'COMPUTE_U'
+                            COMPUTE_U = Value ;
+                            paramSet(14) = true ;
                         case 'FIT'
                             FIT = upper(Value) ;
                             paramSet(5) = true ;
@@ -482,6 +534,9 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
                         case 'DEBUG'
                             DEBUG = Value ;
                             paramSet(11) = true ;
+                        case 'SOLVER'
+                            SOLVER = Value ;
+                            paramSet(13) = true ;
                         otherwise
                             %errorInput(['Wrong argument name in n°',num2str(i),'.'])
                             errorInput([Name,' (n°',num2str(i),').'])
@@ -492,7 +547,7 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
             if ~paramSet(1) ; DIMS_K = find(size(Signal)~=1,1,'last') ; end
             if ~paramSet(2) ; FUNC = repmat('exp',[length(DIMS_K) 1]) ; end
             if ~paramSet(3) ; R0 = 1:floor(min(arrayfun(@(d)size(Signal,d),DIMS_K)/2)) ; end
-            if ~paramSet(4) ; ESTER_THRS = 1 ; end
+            if ~paramSet(4) ; CRIT_THRS = 1 ; end
             if ~paramSet(5) ; FIT = 'TLS' ; end
             if ~paramSet(6) ; DECIM = ones(1,ndims(Signal)) ; end
             if ~paramSet(7) ; SHIFTS = eye(length(DIMS_K)) ; end
@@ -500,6 +555,9 @@ function [K,U,ESTER] = ESPRIT(Signal,varargin)
             if ~paramSet(9) ; STABILDIAG = false ; end
             if ~paramSet(10) ; MAC = false ; end
             if ~paramSet(11) ; DEBUG = false ; end
+            if ~paramSet(12) ; CRIT = 'MDF' ; end
+            if ~paramSet(13) ; SOLVER = 'eig' ; end
+            if ~paramSet(14) ; COMPUTE_U = true ; end
     end
 
 
