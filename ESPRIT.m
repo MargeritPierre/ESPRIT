@@ -16,6 +16,7 @@ function OUT = ESPRIT(Signal,varargin)
 %       FUNC : type of function searched 'exp' or 'cos' (repmat('exp',[length(DIMS_K) 1]))
 %       R0 : signal order candidates (1:floor(min(arrayfun(@(d)size(Signal,d),DIMS_K)/2)))
 %       K0 : length(s) of the signal that gives the size of the autocovariance matrix ([] for an auto choice)
+%       W0 : signal subspace of a previous iteration ([] for a random subspace initialization)
 %       FIT : 'LS' or 'TLS' (TLS)
 %       DECIM : decimation factors (ones(1,ndims(Signal)))
 %           - along DIMS_K : /!\ NYQUIST
@@ -65,6 +66,7 @@ function OUT = ESPRIT(Signal,varargin)
         FUNC ; 
         R0 ; 
         K0 ;
+        W0 ;
         FIT ; 
         DECIM ; 
         SHIFTS ; 
@@ -185,21 +187,26 @@ function OUT = ESPRIT(Signal,varargin)
         
         
         
-% EIGENVALUE DECOMPOSITION        
+% SIGNAL SUBSPACE ESTIMATION        
     if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Eigendecomposition of Css : ') ; lastTime = tic ; end
-    switch SOLVER
-        case 'eig'
-            [W,lambda] = eig(Css,'vector') ;
-            [~,Ind] = sort(lambda,'descend') ;
-            lambda = lambda(Ind) ;
-            W = W(:,Ind) ;
-        case 'eigs'
-            [W,lambda] = eigs(Css,max(R0),'lm') ;
-            lambda = diag(lambda) ;
-            [~,Ind] = sort(lambda,'descend') ;
-            lambda = lambda(Ind) ;
-            W = W(:,Ind) ;
-    end
+    % ESTIMATION
+        if isempty(W0) % re compute completely the signal subspace
+            switch SOLVER
+                case 'eig'
+                    [W,lambda] = eig(Css,'vector') ;
+                case 'eigs'
+                    [W,lambda] = eigs(Css,max(R0),'lm') ;
+                    lambda = diag(lambda) ;
+            end
+        else % Approximate with one QR iteration (Badeau-style)
+            Cxy = Css*W0 ;
+            [W,R] = qr(Cxy,0) ;
+            lambda = diag(W'*Css*W) ;
+        end
+    % SORT EIGENVALUES IN DESCENDING ORDER
+        [~,Ind] = sort(lambda,'descend') ;
+        lambda = lambda(Ind) ;
+        W = W(:,Ind) ;
         
         
 % SIGNAL ORGER CRITERION
@@ -546,15 +553,15 @@ function OUT = ESPRIT(Signal,varargin)
                         case 'DEBUG'
                             DEBUG = Value ;
                             paramSet(11) = true ;
-<<<<<<< HEAD
                         case 'SOLVER'
                             SOLVER = Value ;
                             paramSet(13) = true ;
-=======
                         case 'K0'
                             K0 = Value ;
-                            paramSet(12) = true ;
->>>>>>> 62310e05c503b58b727071988d37efd045699041
+                            paramSet(15) = true ;
+                        case 'W0'
+                            W0 = Value ;
+                            paramSet(16) = true ;
                         otherwise
                             %errorInput(['Wrong argument name in n°',num2str(i),'.'])
                             errorInput([Name,' (n°',num2str(i),').'])
@@ -573,13 +580,11 @@ function OUT = ESPRIT(Signal,varargin)
             if ~paramSet(9) ; STABILDIAG = false ; end
             if ~paramSet(10) ; MAC = false ; end
             if ~paramSet(11) ; DEBUG = false ; end
-<<<<<<< HEAD
             if ~paramSet(12) ; CRIT = 'MDF' ; end
             if ~paramSet(13) ; SOLVER = 'eig' ; end
             if ~paramSet(14) ; COMPUTE_U = true ; end
-=======
-            if ~paramSet(12) ; K0 = [] ; end
->>>>>>> 62310e05c503b58b727071988d37efd045699041
+            if ~paramSet(15) ; K0 = [] ; end
+            if ~paramSet(16) ; W0 = [] ; end
     end
 
 
