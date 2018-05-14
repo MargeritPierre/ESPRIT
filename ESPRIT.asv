@@ -586,15 +586,15 @@ function OUT = ESPRIT(Signal,varargin)
             Q = buildVandermonde(Mk) ;
         % Uncertainties
             shifts = eye(length(DIMS_K)) ; % /!\ SHIFTS IS DEFAULT HERE !
-            for s = 1:size(K,1)
+            for s = 1:size(K,2)
                 [~,~,~,Jup,Jdwn] = selectMatrices(shifts(s,:)) ;
-                for r = 1:size(K,2)
-                    br = [zeros(r-1,1) ; 1 ; zeros(size(K,2)-r,1)] ;
+                for r = 1:size(K,1)
+                    br = [zeros(r-1,1) ; 1 ; zeros(size(K,1)-r,1)] ;
                     QQ = kron(1./A(r,:).',Q) ;
-                    arn = exp(1i*K(s,r)) ;
-                    vrn = br'*((Jup*P)\(Jdwn-Jup*arn)) ;
+                    arn = exp(1i*K(r,s)) ;
+                    vrn = br'*(Jup*P)\(Jdwn-Jup*arn) ;
                     xr = (QQ.')\br ;
-                    dK(s,r) = vrn*dH*xr ;
+                    dK(r,s) = vrn*dH*xr ;
                 end
             end
     end
