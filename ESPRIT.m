@@ -2,9 +2,7 @@ function OUT = ESPRIT(Signal,varargin)
 %
 % ESPRIT Extract wavevectors from a signal
 %
-%   varargout = ESPRIT(Signal,varargin)
-%   [K,U,ESTER] = ESPRIT(Signal,'Name','Value',...)
-%   [K,U,ESTER] = ESPRIT(Signal,DIMS_K,'Name','Value',...)
+%   OUT = ESPRIT(Signal,varargin)
 %
 %   varargin parameters (and default values) : 
 %       CHOICE : 'auto' or 'manual' ('auto')
@@ -12,6 +10,7 @@ function OUT = ESPRIT(Signal,varargin)
 %       CRITERION : 'ESTER' or 'MDL' ('MDL')
 %       CRIT_THRS : criterion threshold (1)
 %       COMPUTE_U : boolean to compute amplitudes (true)
+%       COMPUTE_dK : boolean to compute uncertainties (true)
 %       DIMS_K : dimensions of the wavevectors (ndims(Signal))  
 %       FUNC : type of function searched 'exp' or 'cos' (repmat('exp',[length(DIMS_K) 1]))
 %       R0 : signal order candidates (1:floor(min(arrayfun(@(d)size(Signal,d),DIMS_K)/2)))
@@ -28,10 +27,23 @@ function OUT = ESPRIT(Signal,varargin)
 %           - MAC == 0 : no MAC value computed
 %           - 0 < MAC < 1 : poles with corr > MAC are linked
 %
-%   varargout : 
+%   OUT structure : 
+%    % Sizes
+%       Lp : dimensions of the signal over the isophase surface (size : [1 length(DIMS_P)])
+%       Lk : dimensions of the signal over the wavevectors (size : [1 length(DIMS_K)])
+%       Kk : number of rows of the signal matrix for each signal dimension (size : [1 length(DIMS_K)])
+%       Mk : number of columns of the signal matrix for each signal dimension (size : [1 length(DIMS_K)])
+%    % Subspace
+%       Css : Autocovariance matrix (size : [prod(Kk) prod(Mk)])
+%       W : Truncated signal subspace, max(R0) first E.Vec of CSS (size : [prod(Kk) max(R0)])
+%       lambda : max(R0) first E.Val of Css (size : [max(R0) 1])
+%    % Signal Order Criterion
+%       CRIT : final signal order criterion (size : [1 length(R0)])
+%       ESTER  : ester criterion for each shift (size : [size(SHIFTS,1) length(R0)])
+%    % Results
 %       K : extracted complex wavevectors (size : [length(DIMS_K) R])
-%       U : complex amplitudes (modes) (size : [size(Signal(DIMS_P)) R])
-%       ESTER : ester criterion for each shift (size : [size(SHIFTS,1) length(R0)])
+%       dK : uncertainties (size : [length(DIMS_K) R])
+%       U : complex amplitudes (modes) (size : [[Lp] R])
 %
 %
 % This ESPRIT algorithm implements :
@@ -42,6 +54,8 @@ function OUT = ESPRIT(Signal,varargin)
 %   - Multiple Invariance or Multiple Resolution (SHIFTS)
 %   - Decimate ESPRIT (DECIM)
 %   - Stabilization Diagram (STABILDIAG)
+%   - Choice between EIG, EIGS computing W for speed
+%   - Allow for the signal subspace tracking for speed (trough W and W0)
 %    
 % To go further on developments :
 %   (1) use of high-order cummulents
@@ -49,7 +63,6 @@ function OUT = ESPRIT(Signal,varargin)
 %   (3) GUI for manual choice
 %   (4) Cramer-Rao bound, uncertainty estimation
 %   (5) replace kron() by repelem() in indHbH_d build for speed (ver>=Matlab2015)
-%   (6) choice between EIG, EIGS, SVD or SDS for computing W for speed
 
 
 % INITIALIZATION
@@ -62,6 +75,7 @@ function OUT = ESPRIT(Signal,varargin)
         CRITERION ;
         CRIT_THRS ; 
         COMPUTE_U ;
+        COMPUTE_dK ;
         DIMS_K ; 
         FUNC ; 
         R0 ; 
@@ -73,6 +87,9 @@ function OUT = ESPRIT(Signal,varargin)
         DEBUG ;
         STABILDIAG ;
         MAC ;
+        
+   % Output initialization
+        OUT = [] ;
 
    % MANUAL INPUT MODIF. (for debugging)
         %SHIFTS = [1 1 1 ; 0 -1 1 ; 0 1 1] ;
@@ -82,7 +99,7 @@ function OUT = ESPRIT(Signal,varargin)
         %FUNC = ['exp' ; 'cos' ; 'exp'] ;
         %FUNC = repmat('cos',[length(DIMS_K) 1]) ;
         
-   % DEBUGGING ?     
+   % DEBUGGING ?
         if(DEBUG)
             display(char(10)) ;
             display('----------- ESPRIT ND -----------') ;
@@ -101,10 +118,13 @@ function OUT = ESPRIT(Signal,varargin)
     % Reshaping the signal
         Signal = permute(Signal,[DIMS_P DIMS_K]) ; % Sort dimensions
         Signal = reshape(Signal,[prod(Lp) prod(Lk)]) ;
+        [~,permDims] = sort([DIMS_P DIMS_K]) ; % Used to rechape the signal model
         
     % Output Initialization
         K = zeros([max(R0) length(DIMS_K)]) ;
+        dK = zeros([max(R0) length(DIMS_K)]) ;
         U = zeros([max(R0) length(DIMS_P)+1]) ;
+        SignalModel = zeros(size(Signal)) ;
         ESTER = zeros([size(SHIFTS,1) length(R0)]) ;
         
         
@@ -228,9 +248,13 @@ function OUT = ESPRIT(Signal,varargin)
                     %CRIT = prod(ESTER,1) ;
                     CRIT = max(ESTER,[],1) ;
                     %CRIT = mean(ESTER,1) ;
+                % Save the criterion
+                    OUT.ESTER = ESTER ;
             case 'MDL'
                 MDL = (lambda(1:end-1)-lambda(2:end))./lambda(1:end-1) ;
                 CRIT = [MDL ; 0] ;
+                % Save the criterion
+                    OUT.MDL = MDL ;
         end
     % CHOOSE THE SIGNAL ORDER
         R = find(CRIT>=max(CRIT)*CRIT_THRS,1,'last') ;
@@ -246,19 +270,30 @@ function OUT = ESPRIT(Signal,varargin)
     
 % EXTRACT THE WAVEVECTORS
     if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Pole Estimation : ') ; lastTime = tic ; end
-    if (nargout>=1) ; extractPoles(R) ; end
+    extractPoles(R) ;
         
     
 % ESTIMATE AMPLITUDES
-    if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Amplitude Estimation : ') ; lastTime = tic ; end
-    if COMPUTE_U ; computeU ; end
+    if COMPUTE_dK || COMPUTE_U 
+        if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Amplitude Estimation : ') ; lastTime = tic ; end
+        computeU ;
+    end
+    
+    
+% ESTIMATE UNCERTAINTIES
+    if COMPUTE_dK 
+        if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Uncertainty Estimation : ') ; lastTime = tic ; end
+        computeUncertainties ;
+    end
         
     
 % OUTPUT
     if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Output : ') ; lastTime = tic ; end
     % Results
         OUT.K = K ;
+        OUT.dK = dK ;
         OUT.U = U ;
+        OUT.SignalModel = permute(reshape(SignalModel,[Lp Lk]),permDims) ;
     % Sizes
         OUT.Lp = Lp ;
         OUT.Lk = Lk ;
@@ -266,12 +301,10 @@ function OUT = ESPRIT(Signal,varargin)
         OUT.Mk = Mk ;
     % Subspace
         OUT.Css = Css ;
-        OUT.W = W ;
         OUT.lambda = lambda ;
+        OUT.W = W ;
     % Signal Order Criterion
         OUT.CRIT = CRIT ;
-        %OUT.ESTER = ESTER ;
-        %OUT.MDF = MDF ;
     
 
 % END OF THE PROCEDURE
@@ -310,7 +343,7 @@ function OUT = ESPRIT(Signal,varargin)
                 end
             else % SOME COSINUS SEARCHED
                 % How many indices matrix has to be built ? (only one if every FUNC=='exp')
-                    ind = false(size(indHbH_d)) ;
+                    ind = false(size(indHbH_d)) ; 
                     for i = 1:numel(ind) 
                         ind(i) = ~isempty(indHbH_d{i}) ;
                     end
@@ -347,16 +380,29 @@ function OUT = ESPRIT(Signal,varargin)
         % Normalize
             Css = Css/(prod(Mk)*prod(Lp)) ;
     end
-        
-        
-% MATRICES F (SHIFT INVARIANCE EVAL.)
-    function [F,Wup,Wdwn] = computeF(r,s)
-        % R first eigenvectors
-            Wp = W(:,1:R0(r)) ;
-        % W_up and W_down construction
-            shift = SHIFTS(s,:) ;
-            D = 1:length(shift) ;
-            shift_dims = D(shift~=0) ;
+
+
+% BUILD THE HSS MATRIX
+    function Hss = buildHss(Data)
+        % Stack The HbH matrices by points of isosurface
+            Hss = zeros(prod(Kk),prod(Kk)*length(Lp)) ;
+            for p = 1:length(indP)
+                sig = Data(indP(p),:) ;
+                SIG = 0 ;
+                for i = 1:n_indHbH
+                    SIG = SIG + sig(indHbH{i}) ;
+                end
+                SIG = SIG/n_indHbH ;
+                Hss(1:prod(Kk),(1:prod(Mk))+(p-1)*prod(Mk)) = SIG ;
+            end
+    end
+
+
+% SELECTION INDICES (AND MATRICES OPTIONALLY)
+    function [indUp,indDwn1,indDwn2,Jup,Jdwn] = selectMatrices(shift)
+            % Infos
+                D = 1:length(shift) ;
+                shift_dims = D(shift~=0) ;
             % Indices Up
                 indUp = true(size(indHbH_d{1,1},1),1) ; 
                 if any(isCOS.*shift) ; indTrUp = true(size(indHbH_d{1,1},1),1) ; end
@@ -369,12 +415,6 @@ function OUT = ESPRIT(Signal,varargin)
                             indTrUp = indTrUp & (indHbH_d{d,1}(:,1)<=(Kk(d)-shift(d))*DECIM_K(d)) ;
                             indTrUp = indTrUp & (indHbH_d{d,1}(:,1)>shift(d)*DECIM_K(d)) ;
                     end
-                end
-            % Partial Matrix Up
-                if any(isCOS.*shift) 
-                    Wup = Wp(indUp & indTrUp,:) ;
-                else
-                    Wup = Wp(indUp,:) ;
                 end
             % Indices Down
                 indDwn = true(size(indHbH_d{1,1},1),1) ; 
@@ -392,12 +432,47 @@ function OUT = ESPRIT(Signal,varargin)
                             indTrDwn2 = indTrDwn2 & (indHbH_d{d,1}(:,1)>2*abs(shift(d))*DECIM_K(d)) ;
                     end
                 end
-            % Partial Matrix Down
-                if any(isCOS.*shift) 
-                    Wdwn = (Wp(indDwn & indTrDwn1,:) + Wp(indDwn & indTrDwn2,:))/2 ;
-                else
-                    Wdwn = Wp(indDwn,:) ;
+            % Combine Indices
+                if any(isCOS.*shift) % Cosinus searched in the shift
+                    indUp = indUp & indTrUp ;
+                    indDwn1 = indDwn & indTrDwn1 ;
+                    indDwn2 = indDwn & indTrDwn2 ;
+                else % Only exponentials in the shift
+                    indDwn1 = indDwn ;
+                    indDwn2 = [] ;
                 end
+            % Build selection MATRICES
+                if nargin>3 % If Jup and Jdwn are needed
+                    % Jup
+                        Jup = diag(double(indUp)) ;
+                        Jup(~any(Jup,2),:) = [] ;
+                    % Jdwn
+                        Jdwn = diag(double(indDwn1)) ;
+                        Jdwn(~any(Jdwn,2),:) = [] ;
+                        if any(isCOS.*shift) % Cosinus searched in the shift
+                            Jdwn2 = diag(double(indDwn2)) ;
+                            Jdwn2(~any(Jdwn2,2),:) = [] ;
+                            Jdwn = (Jdwn + Jdwn2)/2 ;
+                        end
+                end
+    end
+        
+        
+% MATRICES F (SHIFT INVARIANCE EVAL.)
+    function [F,Wup,Wdwn] = computeF(r,s)
+        % Get indices
+            shift = SHIFTS(s,:) ;
+            [indUp,indDwn1,indDwn2] = selectMatrices(shift) ;
+        % R first eigenvectors
+            Wp = W(:,1:R0(r)) ;
+        % W_up and W_down construction
+            if any(isCOS.*shift) 
+                Wup = Wp(indUp,:) ;
+                Wdwn = (Wp(indDwn1,:) + Wp(indDwn2,:))/2 ;
+            else
+                Wup = Wp(indUp,:) ;
+                Wdwn = Wp(indDwn1,:) ;
+            end
         % Shift invariance evaluation
             switch FIT
                 case 'LS'
@@ -417,7 +492,7 @@ function OUT = ESPRIT(Signal,varargin)
 
 
 % WAVEVECTORS K EXTRACTION
-    function extractPoles(r)
+    function [T,Beta] = extractPoles(r)
         % Evaluation of all shift invariances
             F = zeros(R0(r),R0(r),size(SHIFTS,1)) ;
             for s = 1:size(SHIFTS,1)
@@ -459,33 +534,53 @@ function OUT = ESPRIT(Signal,varargin)
     end
 
 
+
+% VANDERMONDE MATRIX
+    function V = buildVandermonde(L) % Here, decimation factors are no longer taken into account
+        % Indices
+            indV = zeros(prod(L),length(L)) ;
+            D = 1:length(DIMS_K) ;
+            for d = 1:length(D)
+                indV(:,d) = kron(repmat((1:L(d))',[prod(L(D>d)) 1]),ones([prod(L(D<d)) 1])) - 1 ;
+            end
+        % Poles
+            Z = exp(1i.*K) ;
+            Z = repmat(reshape(Z,[1 size(Z)]),[prod(L) 1]) ;
+        % Conditionning (using a shift)
+            indInv = abs(Z)>1 ;
+            shift = 0*indInv.*repmat(1-L,[prod(L) 1 size(Z,3)]) ;
+            indV = repmat(indV,[1 1 size(Z,3)]) + shift ;
+        % Vandermonde
+            V = reshape(prod(Z.^indV,2),[prod(L) size(Z,3)]) ;
+    end
+
+
 % AMPLITUDES U RETRIEVAL
-    function computeU % Here, decimation factors are not taken into account
+    function computeU % Here, decimation factors are no longer taken into account
         % Vandermonde Matrix
-            % Indices
-                indV = zeros(prod(Lk),length(Lk)) ;
-                D = 1:length(DIMS_K) ;
-                for d = 1:length(D)
-                    indV(:,d) = kron(repmat((1:Lk(d))',[prod(Lk(D>d)) 1]),ones([prod(Lk(D<d)) 1])) - 1 ;
-                end
-            % Poles
-                Z = exp(1i.*K) ;
-                Z = repmat(reshape(Z,[1 size(Z)]),[prod(Lk) 1]) ;
-            % Conditionning (using a shift)
-                indInv = abs(Z)>1 ;
-                shift = 0*indInv.*repmat(1-Lk,[prod(Lk) 1 size(Z,3)]) ;
-                indV = repmat(indV,[1 1 size(Z,3)]) + shift ;
-            % Vandermonde
-                V = reshape(prod(Z.^indV,2),[prod(Lk) size(Z,3)]) ;
+            V = buildVandermonde(Lk) ;
         % Signal reshaping
             S = Signal.' ;
         % Amplitude estimation
             A = V\S ;
-        % Shift conpensation
+        % Vandermonde Shift conpensation
             shi = diag(V(1,:)) ;
             A = shi*A ;
         % Reshaping
             U = reshape(A.',[Lp , size(K,2)]) ;
+        % "Pure" signal reconstruction
+            SignalModel = (V*A).' ;
+    end
+
+
+% UNCERTAINTY ESTIMATION dK
+    function computeUncertainties 
+        % Init
+            dK = zeros(size(K)) ;
+        % Delta Signal
+            dS = Signal-SignalModel ;
+        % Delta signal matrix
+            dH = buildHss(dS) ;
     end
  
 
@@ -565,6 +660,9 @@ function OUT = ESPRIT(Signal,varargin)
                         case 'W0'
                             W0 = Value ;
                             paramSet(16) = true ;
+                        case 'COMPUTE_DK'
+                            COMPUTE_dK = Value ;
+                            paramSet(17) = true ;
                         otherwise
                             %errorInput(['Wrong argument name in n°',num2str(i),'.'])
                             errorInput([Name,' (n°',num2str(i),').'])
@@ -588,6 +686,7 @@ function OUT = ESPRIT(Signal,varargin)
             if ~paramSet(14) ; COMPUTE_U = true ; end
             if ~paramSet(15) ; K0 = [] ; end
             if ~paramSet(16) ; W0 = [] ; end
+            if ~paramSet(17) ; COMPUTE_dK = true ; end
     end
 
 
