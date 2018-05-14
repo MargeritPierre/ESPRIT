@@ -558,7 +558,7 @@ function OUT = ESPRIT(Signal,varargin)
         % Vandermonde Matrix
             V = buildVandermonde(Lk) ;
         % Shift for the conditionning
-            v0 = V(1,:) ;
+            v0 = V(1,:)*0+1 ;
             V = V*diag(1./v0) ;
         % Signal reshaping
             S = Signal.' ;
@@ -590,11 +590,11 @@ function OUT = ESPRIT(Signal,varargin)
                 [~,~,~,Jup,Jdwn] = selectMatrices(shifts(s,:)) ;
                 for r = 1:size(K,2)
                     br = [zeros(r-1,1) ; 1 ; zeros(size(K,2)-r,1)] ;
-                    QQ = kron(1./A(r,:).',Q) ;
+                    QQ = kron((A(r,:).'),Q) ;
                     arn = exp(1i*K(s,r)) ;
                     vrn = br'*((Jup*P)\(Jdwn-Jup*arn)) ;
                     xr = (QQ.')\br ;
-                    dK(s,r) = vrn*dH*xr ;
+                    dK(s,r) = abs(vrn*dH*xr).^2/(2*abs(arn).^2) ;
                 end
             end
     end
@@ -697,7 +697,7 @@ function OUT = ESPRIT(Signal,varargin)
             if ~paramSet(9) ; STABILDIAG = false ; end
             if ~paramSet(10) ; MAC = false ; end
             if ~paramSet(11) ; DEBUG = false ; end
-            if ~paramSet(12) ; CRIT = 'MDL' ; end
+            if ~paramSet(12) ; CRITERION = 'MDL' ; end
             if ~paramSet(13) ; SOLVER = 'eig' ; end
             if ~paramSet(14) ; COMPUTE_U = true ; end
             if ~paramSet(15) ; K0 = [] ; end
