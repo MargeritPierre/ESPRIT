@@ -9,7 +9,7 @@ function OUT = ESPRIT(Signal,varargin)
 %   varargin parameters (and default values) : 
 %       CHOICE : 'auto' or 'manual' ('auto')
 %       SOLVER : 'eigs' or 'eig' ('eig') 
-%       CRITERION : 'ESTER' or 'MDF' ('MDF')
+%       CRITERION : 'ESTER' or 'MDL' ('MDL')
 %       CRIT_THRS : criterion threshold (1)
 %       COMPUTE_U : boolean to compute amplitudes (true)
 %       DIMS_K : dimensions of the wavevectors (ndims(Signal))  
@@ -207,6 +207,9 @@ function OUT = ESPRIT(Signal,varargin)
         [~,Ind] = sort(lambda,'descend') ;
         lambda = lambda(Ind) ;
         W = W(:,Ind) ;
+    % KEEP the needed E.V only
+        lambda = lambda(1:max(R0)) ;
+        W = W(:,1:max(R0)) ;
         
         
 % SIGNAL ORGER CRITERION
@@ -225,9 +228,9 @@ function OUT = ESPRIT(Signal,varargin)
                     %CRIT = prod(ESTER,1) ;
                     CRIT = max(ESTER,[],1) ;
                     %CRIT = mean(ESTER,1) ;
-            case 'MDF'
-                MDF = (lambda(1:end-1)-lambda(2:end))./lambda(1:end-1) ;
-                CRIT = [MDF ; 0] ;
+            case 'MDL'
+                MDL = (lambda(1:end-1)-lambda(2:end))./lambda(1:end-1) ;
+                CRIT = [MDL ; 0] ;
         end
     % CHOOSE THE SIGNAL ORDER
         R = find(CRIT>=max(CRIT)*CRIT_THRS,1,'last') ;
@@ -445,8 +448,8 @@ function OUT = ESPRIT(Signal,varargin)
             indDiag = repmat(eye(R0(r)),[1 size(SHIFTS,1)])==1 ;
             Z = reshape(PHI(indDiag),[R0(r) size(SHIFTS,1)]).' ;
         % Wavevectors in the SHIFT basis
-            %shiftsCOS = logical(repmat(isCOS(:)',[size(SHIFTS,1) 1])) ;
-            shiftsCOS = logical(repmat(isCOS(:),[1 1])) ;
+            shiftsCOS = logical(repmat(isCOS(:)',[size(SHIFTS,1) 1])) ;
+            %shiftsCOS = logical(repmat(isCOS(:),[1 1])) ;
             %K = log(Z)/1i ;
             K = zeros(size(Z)) ;
             K(~shiftsCOS,:) = log(Z(~shiftsCOS,:))/1i ; % FUNC = 'EXP' ;
@@ -580,7 +583,7 @@ function OUT = ESPRIT(Signal,varargin)
             if ~paramSet(9) ; STABILDIAG = false ; end
             if ~paramSet(10) ; MAC = false ; end
             if ~paramSet(11) ; DEBUG = false ; end
-            if ~paramSet(12) ; CRIT = 'MDF' ; end
+            if ~paramSet(12) ; CRIT = 'MDL' ; end
             if ~paramSet(13) ; SOLVER = 'eig' ; end
             if ~paramSet(14) ; COMPUTE_U = true ; end
             if ~paramSet(15) ; K0 = [] ; end
