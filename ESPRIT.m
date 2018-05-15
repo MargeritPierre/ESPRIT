@@ -108,8 +108,8 @@ function OUT = ESPRIT(Signal,varargin)
         
     % Necessary informations
         SIZE = size(Signal) ; % Size of the signal
-        NDIMS = ndims(Signal) ; % Dimension of the signal
-        DIMS_P = setdiff(1:NDIMS,DIMS_K) ; % Dimensions of the isosurface
+        NDIMS = ndims(Signal) ; DIMS = 1:NDIMS ; % Dimension of the signal
+        DIMS_P = DIMS(~ismember(DIMS,DIMS_K)) ; % Dimensions of the isosurface (avoids setdiff() which is slow)
         Lk = SIZE(DIMS_K) ; % Number of points in the dimensions of the exponentials
         Lp = SIZE(DIMS_P) ; % Number of points in the dimensions of the isophase surface
         % When only one point over the isophase surface
@@ -386,7 +386,7 @@ function OUT = ESPRIT(Signal,varargin)
 % BUILD THE HSS MATRIX
     function Hss = buildHss(Data)
         % Stack The HbH matrices by points of isosurface
-            Hss = zeros(prod(Kk),prod(Kk)*length(Lp)) ;
+            Hss = zeros(prod(Kk),prod(Mk)*length(Lp)) ;
             for p = 1:length(indP)
                 sig = Data(indP(p),:) ;
                 SIG = 0 ;
@@ -501,7 +501,8 @@ function OUT = ESPRIT(Signal,varargin)
             end
         % Evaluation of PHI
             if size(SHIFTS,1)==1 % One shift, simple diagonalization
-                [~,PHI] = eig(F) ;
+                [T,PHI] = eig(F) ;
+                Beta = 1 ;
             else % More than one shift, joint diagonalization
                 % Jacobi angles (fails when there is multiplicity)
                     if 0
@@ -558,7 +559,7 @@ function OUT = ESPRIT(Signal,varargin)
         % Vandermonde Matrix
             V = buildVandermonde(Lk) ;
         % Shift for the conditionning
-            v0 = V(1,:)*0+1 ;
+            v0 = V(1,:) ;
             V = V*diag(1./v0) ;
         % Signal reshaping
             S = Signal.' ;
@@ -574,29 +575,84 @@ function OUT = ESPRIT(Signal,varargin)
 
 
 % UNCERTAINTY ESTIMATION dK
+%     function computeUncertaintiesold
+%         % Init
+%             dK = zeros(size(K)) ;
+%         % Delta Signal
+%             dS = Signal-SignalModel ;
+%         % Delta signal matrix
+%             dH = buildHss(dS)/sqrt(prod(Mk)) ;
+%         % Partial Vandermonde matrices
+%             P = buildVandermonde(Kk) ;
+%             Q = buildVandermonde(Mk) ;
+%         % Uncertainties
+%             shifts = eye(length(DIMS_K)) ; % /!\ SHIFTS IS DEFAULT HERE !
+%             for s = 1:size(K,1)
+%                 [~,~,~,Jup,Jdwn] = selectMatrices(shifts(s,:)) ;
+%                 for r = 1:size(K,2)
+%                     br = [zeros(r-1,1) ; 1 ; zeros(size(K,2)-r,1)] ;
+%                     QQ = kron(A(r,:).',Q) ;
+%                     arn = exp(1i*K(s,r)) ;
+%                     vrn = br'*((Jup*P)\(Jdwn-arn*Jup)) ;
+%                     xr = (QQ.')\br ;
+%                     dK(s,r) = sqrt(abs(vrn*dH*xr).^2/(abs(arn).^2)) ;
+%                 end
+%             end 
+%     end
+% 
+% 
+% % UNCERTAINTY ESTIMATION dK
+%     function computeUncertainties 
+%         % Init
+%             dK = zeros(size(K)) ;
+%         % Delta Signal
+%             dS = Signal-SignalModel ;
+%         % Delta signal matrix
+%             H = buildHss(Signal) ;
+%             dH = buildHss(dS) ;
+%             dCss = (dH*H' + H*dH')/(prod(Mk)*prod(Lp))^2 ;
+%         % Partial Vandermonde matrices
+%             P = buildVandermonde(Kk) ;
+%         % Uncertainties
+%             shifts = eye(length(DIMS_K)) ; % /!\ SHIFTS IS DEFAULT HERE !
+%             for s = 1:size(K,1)
+%                 [~,~,~,Jup,Jdwn] = selectMatrices(shifts(s,:)) ;
+%                 for r = 1:size(K,2)
+%                     br = [zeros(r-1,1) ; 1 ; zeros(size(K,2)-r,1)] ;
+%                     arn = exp(1i*K(s,r)) ;
+%                     vrn = br'*((Jup*P)\(Jdwn-arn*Jup)) ;
+%                     xr = (diag(lambda)*P.')\br ;
+%                     dK(s,r) = sqrt(abs(vrn*dCss*xr).^2/(abs(arn).^2)) ;
+%                 end
+%             end 
+%     end
+
+
+% UNCERTAINTY ESTIMATION dK
     function computeUncertainties 
         % Init
             dK = zeros(size(K)) ;
         % Delta Signal
             dS = Signal-SignalModel ;
         % Delta signal matrix
+            H = buildHss(Signal) ;
             dH = buildHss(dS) ;
+            dCss = (dH*H' + H*dH' + dH*dH')/(prod(Mk)*prod(Lp)) ;
         % Partial Vandermonde matrices
-            P = buildVandermonde(Kk) ;
-            Q = buildVandermonde(Mk) ;
+            [T,~] = extractPoles(R) ;
+            invT = inv(T) ;
+            Us = W(:,1:R) ;
         % Uncertainties
             shifts = eye(length(DIMS_K)) ; % /!\ SHIFTS IS DEFAULT HERE !
             for s = 1:size(K,1)
-                [~,~,~,Jup,Jdwn] = selectMatrices(shifts(s,:)) ;
+                [indUp,~,~,Jup,Jdwn] = selectMatrices(shifts(s,:)) ;
                 for r = 1:size(K,2)
-                    br = [zeros(r-1,1) ; 1 ; zeros(size(K,2)-r,1)] ;
-                    QQ = kron((A(r,:).'),Q) ;
                     arn = exp(1i*K(s,r)) ;
-                    vrn = br'*((Jup*P)\(Jdwn-Jup*arn)) ;
-                    xr = (QQ.')\br ;
-                    dK(s,r) = abs(vrn*dH*xr).^2/(2*abs(arn).^2) ;
+                    vrn = invT(r,:)'*((Us(indUp,:))\(Jdwn-arn*Jup)) ;
+                    xr = (diag(lambda)*Us')\T(:,r) ;
+                    dK(s,r) = sqrt(abs(vrn*dCss*xr).^2/(abs(arn).^2)) ;
                 end
-            end
+            end 
     end
  
 

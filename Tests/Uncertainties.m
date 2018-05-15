@@ -6,15 +6,15 @@ clear all
 
 
 Ns = 10 ; % Number of Samples
-F = [-.02]*pi ; % Tones (normalized freq.)
+F = [-.2]*pi ; % Tones (normalized freq.)
 U = [1] ; % Amplitudes
-SNR = logspace(3.01,3,3) ;
-nMCMC = 1000 ;
+SNR = logspace(-1,5,20) ;
+nMCMC = 100 ;
 
 t = 0:1:Ns-1 ; % time 
 nF = length(F) ; % number of tones
 nSNR = length(SNR) ; % number of SNR levels
-Signal = sum(U.'*sum(exp(1i*F.'*t),1),1) ;
+Signal = sum(U.'*sum(exp(1i*F.'*t),1),1) ; 
 
 EspArgs = {... Arguments for ESPRIT
            'DIMS_K' , 2 ; ...
@@ -24,6 +24,7 @@ EspArgs = {... Arguments for ESPRIT
            'FIT' , 'LS' ; ...
            'SOLVER' , 'eig' ; ...
            'DEBUG' , false ; ...
+           'K0' , [] ; ...
           }' ;
 
 K = zeros(nSNR,nF,nMCMC) ;
@@ -55,7 +56,7 @@ stdK = var(K,0,3) ;
 meandK = mean(abs(dK),3) ;
 mindK = min(abs(dK),[],3) ;
 maxdK = max(abs(dK),[],3) ;
-tMSE = (mean(abs(K-repmat(F.',[nSNR 1 nMCMC])).^2,3)) ;
+tMSE = sqrt(mean(abs(K-repmat(F.',[nSNR 1 nMCMC])).^2,3)) ;
 
 
 clf ;
