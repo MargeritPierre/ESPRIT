@@ -5,10 +5,10 @@ clear all
 %close all
 
 
-Ns = 10 ; % Number of Samples
-F = [-.2]*pi ; % Tones (normalized freq.)
+Ns = 100 ; % Number of Samples
+F = [-.2-.1i*0]*pi ; % Tones (normalized freq.)
 U = [1] ; % Amplitudes
-SNR = logspace(-1,5,20) ;
+SNR = logspace(5,10,20) ;
 nMCMC = 100 ;
 
 t = 0:1:Ns-1 ; % time 

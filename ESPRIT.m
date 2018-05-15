@@ -575,33 +575,33 @@ function OUT = ESPRIT(Signal,varargin)
 
 
 % UNCERTAINTY ESTIMATION dK
-%     function computeUncertaintiesold
-%         % Init
-%             dK = zeros(size(K)) ;
-%         % Delta Signal
-%             dS = Signal-SignalModel ;
-%         % Delta signal matrix
-%             dH = buildHss(dS)/sqrt(prod(Mk)) ;
-%         % Partial Vandermonde matrices
-%             P = buildVandermonde(Kk) ;
-%             Q = buildVandermonde(Mk) ;
-%         % Uncertainties
-%             shifts = eye(length(DIMS_K)) ; % /!\ SHIFTS IS DEFAULT HERE !
-%             for s = 1:size(K,1)
-%                 [~,~,~,Jup,Jdwn] = selectMatrices(shifts(s,:)) ;
-%                 for r = 1:size(K,2)
-%                     br = [zeros(r-1,1) ; 1 ; zeros(size(K,2)-r,1)] ;
-%                     QQ = kron(A(r,:).',Q) ;
-%                     arn = exp(1i*K(s,r)) ;
-%                     vrn = br'*((Jup*P)\(Jdwn-arn*Jup)) ;
-%                     xr = (QQ.')\br ;
-%                     dK(s,r) = sqrt(abs(vrn*dH*xr).^2/(abs(arn).^2)) ;
-%                 end
-%             end 
-%     end
+    function computeUncertainties
+        % Init
+            dK = zeros(size(K)) ;
+        % Delta Signal
+            dS = Signal-SignalModel ;
+        % Delta signal matrix
+            dH = buildHss(dS)/sqrt(prod(Mk)) ;
+        % Partial Vandermonde matrices
+            P = buildVandermonde(Kk) ;
+            Q = buildVandermonde(Mk) ;
+        % Uncertainties
+            shifts = eye(length(DIMS_K)) ; % /!\ SHIFTS IS DEFAULT HERE !
+            for s = 1:size(K,1)
+                [~,~,~,Jup,Jdwn] = selectMatrices(shifts(s,:)) ;
+                for r = 1:size(K,2)
+                    br = [zeros(r-1,1) ; 1 ; zeros(size(K,2)-r,1)] ;
+                    QQ = kron(A(r,:).',Q) ;
+                    arn = exp(1i*K(s,r)) ;
+                    vrn = br'*((Jup*P)\(Jdwn-arn*Jup)) ;
+                    xr = (QQ.')\br ;
+                    dK(s,r) = sqrt(abs(vrn*dH*xr).^2/(abs(arn).^2)) ;
+                end
+            end 
+    end
 % 
 % 
-% % UNCERTAINTY ESTIMATION dK
+% UNCERTAINTY ESTIMATION dK
 %     function computeUncertainties 
 %         % Init
 %             dK = zeros(size(K)) ;
@@ -629,32 +629,32 @@ function OUT = ESPRIT(Signal,varargin)
 
 
 % UNCERTAINTY ESTIMATION dK
-    function computeUncertainties 
-        % Init
-            dK = zeros(size(K)) ;
-        % Delta Signal
-            dS = Signal-SignalModel ;
-        % Delta signal matrix
-            H = buildHss(Signal) ;
-            dH = buildHss(dS) ;
-            dCss = (dH*H' + H*dH' + dH*dH')/(prod(Mk)*prod(Lp)) ;
-        % Partial Vandermonde matrices
-            [T,~] = extractPoles(R) ;
-            invT = inv(T) ;
-            Us = W(:,1:R) ;
-        % Uncertainties
-            shifts = eye(length(DIMS_K)) ; % /!\ SHIFTS IS DEFAULT HERE !
-            for s = 1:size(K,1)
-                [indUp,~,~,Jup,Jdwn] = selectMatrices(shifts(s,:)) ;
-                for r = 1:size(K,2)
-                    arn = exp(1i*K(s,r)) ;
-                    vrn = invT(r,:)'*((Us(indUp,:))\(Jdwn-arn*Jup)) ;
-                    xr = (diag(lambda)*Us')\T(:,r) ;
-                    dK(s,r) = sqrt(abs(vrn*dCss*xr).^2/(abs(arn).^2)) ;
-                end
-            end 
-    end
- 
+%     function computeUncertainties 
+%         % Init
+%             dK = zeros(size(K)) ;
+%         % Delta Signal
+%             dS = Signal-SignalModel ;
+%         % Delta signal matrix
+%             H = buildHss(Signal) ;
+%             dH = buildHss(dS) ;
+%             dCss = (dH*H' + H*dH')/(prod(Mk)*prod(Lp))^3 ;
+%         % Partial Vandermonde matrices
+%             [T,~] = extractPoles(R) ;
+%             invT = inv(T) ;
+%             Us = W(:,1:R) ;
+%         % Uncertainties
+%             shifts = eye(length(DIMS_K)) ; % /!\ SHIFTS IS DEFAULT HERE !
+%             for s = 1:size(K,1)
+%                 [indUp,~,~,Jup,Jdwn] = selectMatrices(shifts(s,:)) ;
+%                 for r = 1:size(K,2)
+%                     arn = exp(1i*K(s,r)) ;
+%                     vrn = invT(r,:).'*((Us(indUp,:))\(Jdwn-arn*Jup)) ;
+%                     xr = (diag(lambda)*Us.')\T(:,r) ;
+%                     dK(s,r) = sqrt(abs(vrn*dCss*xr).^2/(abs(arn).^2)) ;
+%                 end
+%             end 
+%     end
+%  
 
 
     
