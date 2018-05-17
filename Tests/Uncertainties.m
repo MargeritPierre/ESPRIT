@@ -411,9 +411,9 @@ Ns = 100 ; % Number of Samples
 F = [-.023-.1i*0]*pi ; % Tones (normalized freq.)
 U = [1] ; % Amplitudes
 %K0 = unique(round(logspace(log10(3),log10(Ns),10))) ;
-K0 = round(linspace(3,Ns,20)) ;
+K0 = unique(round(linspace(3,Ns,20))) ;
 SNR = 1e2 ;
-nMCMC = 200 ;
+nMCMC = 100 ;
 profiler = false ;
 
 t = 0:1:Ns-1 ; % time 
