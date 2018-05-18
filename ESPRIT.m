@@ -234,30 +234,35 @@ function OUT = ESPRIT(Signal,varargin)
         
 % SIGNAL ORGER CRITERION
     if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Signal Order Criterion : ') ; lastTime = tic ; end
-    % COMPUTE THE CRITERION
-        switch CRITERION
-            case 'ESTER'
-                % Compute all errors
-                    ESTER = zeros(size(SHIFTS,1),length(R0)) ;
-                    for r = 1:length(R0)
-                        for s = 1:size(SHIFTS,1)
-                            ESTER(s,r) = ester(r,s) ;
+    if length(R0)==1 % THE SIGNAL ORDER HAS BEEN GIVEN
+        R = 1 ;
+    else % SIGNAL ORDER CHOICE
+        % COMPUTE THE CRITERION
+            switch CRITERION
+                case 'ESTER'
+                    % Compute all errors
+                        ESTER = zeros(size(SHIFTS,1),length(R0)) ;
+                        for r = 1:length(R0)
+                            for s = 1:size(SHIFTS,1)
+                                ESTER(s,r) = ester(r,s) ;
+                            end
                         end
-                    end
-                % Compute the mean over shifts
-                    %CRIT = prod(ESTER,1) ;
-                    CRIT = max(ESTER,[],1) ;
-                    %CRIT = mean(ESTER,1) ;
-                % Save the criterion
-                    OUT.ESTER = ESTER ;
-            case 'MDL'
-                MDL = (lambda(1:end-1)-lambda(2:end))./lambda(1:end-1) ;
-                CRIT = [MDL ; 0] ;
-                % Save the criterion
-                    OUT.MDL = MDL ;
-        end
-    % CHOOSE THE SIGNAL ORDER
-        R = find(CRIT>=max(CRIT)*CRIT_THRS,1,'last') ;
+                    % Compute the mean over shifts
+                        %CRIT = prod(ESTER,1) ;
+                        CRIT = max(ESTER,[],1) ;
+                        %CRIT = mean(ESTER,1) ;
+                    % Save the criterion
+                        OUT.ESTER = ESTER ;
+                case 'MDL'
+                    MDL = (lambda(1:end-1)-lambda(2:end))./lambda(1:end-1) ;
+                    CRIT = [MDL(R0) ; 0] ;
+                    % Save the criterion
+                        OUT.MDL = MDL ;
+            end
+            % CHOOSE THE SIGNAL ORDER
+                R = find(CRIT>=max(CRIT)*CRIT_THRS,1,'last') ;
+                OUT.CRIT = CRIT ;
+    end
     
         
 % STABILIZATION DIAGRAM
@@ -304,8 +309,6 @@ function OUT = ESPRIT(Signal,varargin)
         OUT.Css = Css ;
         OUT.lambda = lambda ;
         OUT.W = W ;
-    % Signal Order Criterion
-        OUT.CRIT = CRIT ;
     
 
 % END OF THE PROCEDURE

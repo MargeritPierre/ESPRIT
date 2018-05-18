@@ -5,14 +5,14 @@ clear all
 %close all
 
 
-Ns = 100 ; % Number of Samples
-F = [-.023-.1i*0]*pi ; % Tones (normalized freq.)
+Ns = 50 ; % Number of Samples
+F = [-.023 .1 -.2 .06 .3]*pi ; % Tones (normalized freq.)
 U = [1] ; % Amplitudes
 SNR = logspace(-1,4,10) ;
 nMCMC = 200 ;
 profiler = false ;
 
-t = 0:1:Ns-1 ; % time 
+t = 0:1:Ns-1 ; % time
 nF = length(F) ; % number of tones
 nSNR = length(SNR) ; % number of SNR levels
 
@@ -41,8 +41,9 @@ for s = 1:nSNR
         noise = (Rn+1i*In) ;
         noise = noise*norm(Signal)/norm(noise)/SNR(s) ;
         out = ESPRIT(Signal+noise,EspArgs{:}) ;
-        K(s,:,m) = out.K ;
-        dK(s,:,m) = out.dK ;
+        [~,ind] = sort(real(out.K)) ;
+        K(s,:,m) = out.K(ind) ;
+        dK(s,:,m) = out.dK(ind) ;
         if toc(ti)>.2
             ti = tic ;
             wtbr = waitbar((m+(s-1)*nMCMC)/nMCMC/nSNR,wtbr) ;
@@ -53,18 +54,18 @@ delete(wtbr) ;
 if profiler ; profile viewer ; end
 drawnow ;
 
-%[K,ind] = sort(K,2) ;
-%dK = dK(ind) ;
+dK = reshape(dK,nSNR,[]) ;
+stdK = mean(var(K,0,3),2) ;
+meandK = mean(abs(dK),2) ;
+mindK = min(abs(dK),[],2) ; ... meandK - std(dK,0,3) ;
+maxdK = max(abs(dK),[],2) ; ... meandK + std(dK,0,3) ;
 
-meanK = mean(K,3) ;
-stdK = var(K,0,3) ;
-meandK = mean(abs(dK),3) ;
-mindK = min(abs(dK),[],3) ; ... meandK - std(dK,0,3) ;
-maxdK = max(abs(dK),[],3) ; ... meandK + std(dK,0,3) ;
-SE = abs(K-repmat(F.',[nSNR 1 nMCMC])).^2 ;
-tMSE = (mean(SE,3)) ;
-minSE = min(SE,[],3) ; ... meandK - std(dK,0,3) ;
-maxSE = max(SE,[],3) ; ... meandK + std(dK,0,3) ;
+[~,ind] = sort(real(F)) ;
+SE = abs(K-repmat(sort(F(ind)),[nSNR 1 nMCMC])).^2 ;
+SE = reshape(SE,nSNR,[]) ;
+tMSE = (mean(SE,2)) ;
+minSE = min(SE,[],2) ; ... meandK - std(dK,0,3) ;
+maxSE = max(SE,[],2) ; ... meandK + std(dK,0,3) ;
 
 
 clf ;
