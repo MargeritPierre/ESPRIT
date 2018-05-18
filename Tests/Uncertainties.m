@@ -6,13 +6,13 @@ clear all
 
 
 Ns = 50 ; % Number of Samples
-F = [-.023 .1 -.2 .06 .3]*pi ; % Tones (normalized freq.)
+F = [-.023 .1 -.2 .06 .3 -.04 .01]*pi ; % Tones (normalized freq.)];%
 U = [1] ; % Amplitudes
-SNR = logspace(-1,4,10) ;
+SNR = logspace(-1,6,10) ;
 nMCMC = 200 ;
 profiler = false ;
 
-t = 0:1:Ns-1 ; % time
+t = 0:1:Ns-1 ; % time 
 nF = length(F) ; % number of tones
 nSNR = length(SNR) ; % number of SNR levels
 
@@ -320,7 +320,7 @@ clear all
 %close all
 
 
-Ns = 20 ; % Number of Sensors
+Ns = 100 ; % Number of Sensors
 Nsnap = unique(round(logspace(log10(1),log10(500),10))) ; % Number of Snapshots
 F = [-.23-.1i*0]*pi ; % Tones (normalized freq.)
 U = [1] ; % Amplitudes
@@ -401,7 +401,7 @@ set(gca,'xscale','log','yscale','log') ;
 
 
 
-%% 1D UNCERTAINTY ESTIMATION (VARAIATION OF THE SPATIAL SMOOTHING)
+%% 1D UNCERTAINTY ESTIMATION (VARIATION OF THE SPATIAL SMOOTHING)
 
 clc
 clear all
