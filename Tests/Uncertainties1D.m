@@ -8,8 +8,8 @@ clear all
 Ns = 100 ; % Number of Samples
 F = [.05]*pi%] ; % Tones (normalized freq.)];%]%
 U = [100] ; % Amplitudes
-SNR = logspace(-1,6,10) ;
-nMCMC = 1000 ;
+SNR = logspace(-3,6,10) ;
+nMCMC = 100 ;
 profiler = false ;
 
 t = 0:1:Ns-1 ; % time 
@@ -19,7 +19,7 @@ nSNR = length(SNR) ; % number of SNR levels
 EspArgs = {... Arguments for ESPRIT
            'DIMS_K' , 2 ; ...
            'R0' , nF ; ...
-           'DECIM' , [1 5] ; ...
+           'DECIM' , [1 1] ; ...
            'FUNC' , 'exp' ; ...
            'FIT' , 'LS' ; ...
            'SOLVER' , 'eig' ; ...
@@ -171,9 +171,9 @@ clear all
 
 
 Ns = 100 ; % Number of Samples
-F = logspace(log10(0.000001),log10(Ns/2.01),10)*pi/Ns ; % Tones (normalized freq.)
+F = logspace(log10(0.000001),log10(Ns/2.01),10)*pi/Ns*(1+0i) ; % Tones (normalized freq.)
 U = [1] ; % Amplitudes
-SNR = 1e1 ;
+SNR = 1e3 ;
 nMCMC = 100 ;
 profiler = false ;
 
@@ -363,7 +363,7 @@ if profiler ; profile on ; end
 for s = 1:nNsnap
     for m = 1:nMCMC
         Amp = ((rand(Nsnap(s),1)*2-1)+1i*(rand(Nsnap(s),1)*2-1)) ;
-        Amp = Amp./abs(Amp)*U ;
+        Amp = Amp./abs(Amp).*U ;
         Signal = Amp*sum(exp(1i*F.'*t),1) ; 
         Rn = rand(size(Signal))*2-1 ;
         In = rand(size(Signal))*2-1 ;

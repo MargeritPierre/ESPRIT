@@ -282,7 +282,8 @@ function OUT = ESPRIT(Signal,varargin)
                         OUT.ESTER = ESTER ;
                 case 'MDL'
                     MDL = (lambda(1:end-1)-lambda(2:end))./lambda(1:end-1) ;
-                    CRIT = [MDL(R0) ; 0] ;
+                    CRIT = [MDL ; 0] ;
+                    CRIT = CRIT(1:max(R0)) ;
                     % Save the criterion
                         OUT.MDL = MDL ;
             end
@@ -574,7 +575,8 @@ function OUT = ESPRIT(Signal,varargin)
                 K(~shiftsCOS,:) = log(Z(~shiftsCOS,:))/1i ; % FUNC = 'EXP' ;
                 K(shiftsCOS,:) = acos(Z(shiftsCOS,:)) ; % FUNC = 'COS' ;
             else
-                K = log(Z)/1i ;
+                K = log(Z)/1i ; % FUNC = 'EXP' ;
+                %K = acos(Z) ; % FUNC = 'COS' ;
             end
         % Wavevectors in the cartesian basis
             K = (SHIFTS*diag(DECIM_K))\(K) ;
@@ -604,7 +606,7 @@ function OUT = ESPRIT(Signal,varargin)
         % Vandermonde Matrix
             V = buildVandermonde(Lk) ;
         % Shift for the conditionning
-            v0 = V(1,:) ;
+            v0 = max(abs(V),[],1) ;
             V = V*diag(1./v0) ;
         % Signal reshaping
             S = Signal.' ;
@@ -625,15 +627,19 @@ function OUT = ESPRIT(Signal,varargin)
             dK = zeros(size(K)) ;
         % Delta Signal
             dS = Signal-SignalModel ;
-            %dS = dS-repmat(mean(dS,1),[length(indP) 1]) ;
-            dH = buildHss(dS) ;
+            dSzm = (dS-repmat(mean(dS,1),[size(dS,1) 1])).' ;
+            TAU = conj(dS.'*conj(dS)) ; %dSzm*dSzm' ;
+            %dH = buildHss(dS) ;
         % Partial Vandermonde matrices
             V = buildVandermonde(Lk) ;
+            V = V*diag(1./max(abs(V),[],1)) ;
             P = V(indHbH{1}(:,1),:) ;
             Q = V(indHbH{1}(1,:),:) ;
             for i = 2:n_indHbH % If cosinuses
                 P = P + V(indHbH{2}(:,1),:) ; 
             end
+            P = P./n_indHbH ;
+            P = P*diag(1./P(1,:)) ;
         % Complete right-Vandermonde Matrix
             QQ = repmat(Q,[length(indP) 1]) ;
             QA = zeros(prod(Mk)*length(indP),R0(R)) ;
@@ -647,15 +653,16 @@ function OUT = ESPRIT(Signal,varargin)
                 [~,~,~,Jup,Jdwn] = selectMatrices(shifts(s,:)) ;
                 vn = (Jup*P)\eye(size(Jdwn,1)) ;
                 for r = 1:size(K,2)
-                    arn = exp(1i*K(s,r)*DECIM_K(shifts(s,:)==1)) ;
+                    arn = V(2,r) ; %exp(1i*K(s,r)*DECIM_K(shifts(s,:)==1)) ;
                     vrn = vn(r,:)*(Jdwn-arn*Jup) ;
                     if 0 % UNCERTAINTY (DOES NOT WORK WELL...)
-                        dK(s,r) = abs(vrn*dH*conj(x(:,r))/arn/prod(DECIM_K))^2 ;
+                        %dK(s,r) = abs(vrn*dH*conj(x(:,r))/arn/prod(DECIM_K))^2 ;
                     else % MEAN SQUARE ERROR /!\ WHITE GAUSSIAN NOISE HYPOTHESIS !
                         VRN = reshape(vrn',[Kk 1]) ;
-                        XR = reshape(conj(x(:,r)),[Mk 1]) ;
+                        XR = reshape(conj(x(:,r)),[Mk length(indP)]) ;
                         ZN = convn(VRN,XR) ;
                         dK(s,r) = var(dS(:))*norm(ZN(:)/prod(DECIM_K))^2 ;
+                        %dK(s,r) = trace(abs(ZN'*TAU*ZN))/length(indP)/prod(DECIM_K)^2 ;
                     end
                 end
             end
@@ -830,7 +837,7 @@ function OUT = ESPRIT(Signal,varargin)
                 stab.axCrit = axes('outerposition',[0 0 .2 1]) ;
                     stab.plOrderLine = plot(stab.axCrit,R0(R)*[1 1],[min(log10(ESTER(:))) max(log10(ESTER(:)))],'-.k','linewidth',1) ;
                     stab.plRLine = plot(stab.axCrit,R0(R)*[1 1],[min(log10(ESTER(:))) max(log10(ESTER(:)))],'-.r','linewidth',1) ;
-                    plot(R0,log10(ESTER),'.-','markersize',20,'linewidth',1) ;
+                    plot(R0,log10(CRIT),'.-','markersize',20,'linewidth',1) ;
                     set(gca,'view',[-90 90]) ;
                     box on
                     grid on
@@ -840,7 +847,7 @@ function OUT = ESPRIT(Signal,varargin)
                         hBehavior.Enable = false ;
             % Axes for the Poles
                 stab.axPoles = axes('outerposition',[.2 0 .8 1]) ;
-                    plot3(abs(real(K_MAClinks')),OR_MAClinks',abs(imag(K_MAClinks')./real(K_MAClinks')),'-k','linewidth',.5)
+                    if MAC ; plot3(abs(real(K_MAClinks')),OR_MAClinks',abs(imag(K_MAClinks')./real(K_MAClinks')),'-k','linewidth',.5) ; end
                     plot3(abs(real(Kstab)),repmat(R0(:),[1 max(R0)]),abs(imag(Kstab)./real(Kstab)),'.','markersize',13,'linewidth',1.5)
                     stab.axPoles.ZScale = 'log' ;
                     stab.axPoles.SortMethod = 'childorder' ;
