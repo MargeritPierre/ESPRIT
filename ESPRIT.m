@@ -620,52 +620,13 @@ function OUT = ESPRIT(Signal,varargin)
 
 
 % UNCERTAINTY ESTIMATION dK
-%     function computeUncertainties
-%         % Init
-%             dK = zeros(size(K)) ;
-%         % Delta Signal
-%             dS = Signal-SignalModel ;
-%         % Delta signal matrix
-%             dH = buildHss(dS) ;
-%         % Pure signal matrix
-%             H = buildHss(SignalModel) ;
-%         % Signal subspace of the noiseless signal
-%             [Us,omega] = eig(H*H'/prod(Mk)/length(indP),'vector');
-%             [~,ind] = sort(omega,'descend') ;
-%             ind = ind(1:R0(R)) ;
-%             Us = Us(:,ind) ;
-%             omega = omega(ind) ;
-%         % Signal subspace perturbation
-%             dUs = (eye(size(dH,1))-Us*Us')*dH*pinv(H)*Us ;%
-%             %dUs = W-Us ;%
-%         % Uncertainties
-%             T = 1 ;
-%             invT = 1 ;
-% %             [T,~] = extractPoles(R) ;
-% %             invT = inv(T) ;
-%             shifts = eye(length(DIMS_K)) ; % /!\ SHIFTS IS DEFAULT HERE !
-%             for n = 1:size(K,1)
-%                 [~,~,~,Jup,Jdwn] = selectMatrices(shifts(n,:)) ;
-%                 Fn = (Jup*Us)\(Jdwn*Us) ;
-%                 dFn = Fn*(Jdwn*Us)\(Jdwn*dUs) - (Jup*Us)\(Jup*dUs)*Fn ;
-%                 %dFn = (Jup*W)\(Jdwn*W) - (Jup*Us)\(Jdwn*Us) ;
-%                 for o = 1:size(K,2)
-%                     darn = invT(:,o).'*dFn*T(:,o) ;
-%                     dK(n,o) = abs(darn/exp(1i*K(n,o)))^2 ;
-%                     %dK(s,r) = abs(darn/K(s,r))^2 ;
-%                 end
-%             end 
-%     end
-
-
-% UNCERTAINTY ESTIMATION dK
     function computeUncertainties
         % Init
             dK = zeros(size(K)) ;
         % Delta Signal
             dS = Signal-SignalModel ;
-        % Delta signal matrix
-            dH = buildHss(dS)*sqrt(R0(R))/prod(DECIM_K) ; % %
+            %dS = dS-repmat(mean(dS,1),[length(indP) 1]) ;
+            dH = buildHss(dS) ;
         % Partial Vandermonde matrices
             V = buildVandermonde(Lk) ;
             P = V(indHbH{1}(:,1),:) ;
@@ -673,25 +634,31 @@ function OUT = ESPRIT(Signal,varargin)
             for i = 2:n_indHbH % If cosinuses
                 P = P + V(indHbH{2}(:,1),:) ; 
             end
-            %P = P*(norm(P)) ;
-            %Q = Q*(norm(Q)) ;
         % Complete right-Vandermonde Matrix
-            QQ = zeros(prod(Mk)*length(indP),R0(R)) ;
-            for p = 1:length(indP)
-                QQ((1:prod(Mk))+prod(Mk)*(p-1),:) = Q*diag(A(:,indP(p))) ;
+            QQ = repmat(Q,[length(indP) 1]) ;
+            QA = zeros(prod(Mk)*length(indP),R0(R)) ;
+            for p = 1:length(indP) 
+                QA((1:prod(Mk))+(p-1)*prod(Mk),:) = Q*diag(1./A(:,indP(p))) ;
             end
         % Uncertainties
             shifts = eye(length(DIMS_K)) ; % /!\ SHIFTS IS DEFAULT HERE !
+            x = conj(QA)/norm(QQ)^2 ;
             for s = 1:size(K,1)
                 [~,~,~,Jup,Jdwn] = selectMatrices(shifts(s,:)) ;
+                vn = (Jup*P)\eye(size(Jdwn,1)) ;
                 for r = 1:size(K,2)
-                    br = [zeros(r-1,1) ; 1 ; zeros(size(K,2)-r,1)] ;
-                    arn = exp(1i*K(s,r)) ;
-                    vrn = br'*((Jup*P)\(Jdwn-arn*Jup)) ;
-                    xr = (QQ.')\br ;
-                    dK(s,r) = abs(vrn*dH*xr/arn)^2/(prod(Mk)*length(indP)*max(1,prod(Mk./Kk))) ;
+                    arn = exp(1i*K(s,r)*DECIM_K(shifts(s,:)==1)) ;
+                    vrn = vn(r,:)*(Jdwn-arn*Jup) ;
+                    if 0 % UNCERTAINTY (DOES NOT WORK WELL...)
+                        dK(s,r) = abs(vrn*dH*conj(x(:,r))/arn/prod(DECIM_K))^2 ;
+                    else % MEAN SQUARE ERROR /!\ WHITE GAUSSIAN NOISE HYPOTHESIS !
+                        VRN = reshape(vrn',[Kk 1]) ;
+                        XR = reshape(conj(x(:,r)),[Mk 1]) ;
+                        ZN = convn(VRN,XR) ;
+                        dK(s,r) = var(dS(:))*norm(ZN(:)/prod(DECIM_K))^2 ;
+                    end
                 end
-            end 
+            end
     end
 
 

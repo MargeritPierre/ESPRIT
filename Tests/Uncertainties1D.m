@@ -5,11 +5,11 @@ clear all
 %close all
 
 
-Ns = 50 ; % Number of Samples
-F = [-.023];% .1 -.2 .06 .3 -.04 .01]*pi ; % Tones (normalized freq.)];%
-U = [1] ; % Amplitudes
-SNR = logspace(-1,3,10) ;
-nMCMC = 200 ;
+Ns = 100 ; % Number of Samples
+F = [.05]*pi%] ; % Tones (normalized freq.)];%]%
+U = [100] ; % Amplitudes
+SNR = logspace(-1,6,10) ;
+nMCMC = 1000 ;
 profiler = false ;
 
 t = 0:1:Ns-1 ; % time 
@@ -19,7 +19,7 @@ nSNR = length(SNR) ; % number of SNR levels
 EspArgs = {... Arguments for ESPRIT
            'DIMS_K' , 2 ; ...
            'R0' , nF ; ...
-           'DECIM' , [1 1] ; ...
+           'DECIM' , [1 5] ; ...
            'FUNC' , 'exp' ; ...
            'FIT' , 'LS' ; ...
            'SOLVER' , 'eig' ; ...
@@ -34,8 +34,9 @@ ti = tic ;
 if profiler ; profile on ; end
 for s = 1:nSNR
     for m = 1:nMCMC
-        Amp = ((rand(1)*2-1)+1i*(rand(1)*2-1))*U ;
-        Signal = sum(Amp.'*sum(exp(1i*F.'*t),1),1) ;
+        Amp = ((rand(1,nF)*2-1)+1i*(rand(1,nF)*2-1)) ;
+        Amp = Amp./abs(Amp)*U ;
+        Signal = Amp*exp(1i*F.'*t) ;
         Rn = rand(size(Signal))*2-1 ;
         In = rand(size(Signal))*2-1 ;
         noise = (Rn+1i*In) ;
@@ -87,8 +88,8 @@ clear all
 %close all
 
 
-Ns = round(logspace(log10(20),log10(200),10)) ; % Number of Samples
-F = [.3]*pi ; % Tones (normalized freq.)
+Ns = round(logspace(log10(20),log10(200),20)) ; % Number of Samples
+F = [.23]*pi ; % Tones (normalized freq.)
 U = [1] ; % Amplitudes
 SNR = 1e2 ;
 nMCMC = 100 ;
@@ -116,8 +117,9 @@ if profiler ; profile on ; end
 for n = 1:nNs
     t = 0:1:Ns(n)-1 ; % time 
     for m = 1:nMCMC
-        Amp = ((rand(1)*2-1)+1i*(rand(1)*2-1))*U ;
-        Signal = sum(Amp.'*sum(exp(1i*F.'*t),1),1) ;
+        Amp = ((rand(1,nF)*2-1)+1i*(rand(1,nF)*2-1)) ;
+        Amp = Amp./abs(Amp)*U ;
+        Signal = Amp*exp(1i*F.'*t) ;
         Rn = rand(size(Signal))*2-1 ;
         In = rand(size(Signal))*2-1 ;
         noise = (Rn+1i*In) ;
@@ -170,8 +172,8 @@ clear all
 
 Ns = 100 ; % Number of Samples
 F = logspace(log10(0.000001),log10(Ns/2.01),10)*pi/Ns ; % Tones (normalized freq.)
-U = [10] ; % Amplitudes
-SNR = 1e0 ;
+U = [1] ; % Amplitudes
+SNR = 1e1 ;
 nMCMC = 100 ;
 profiler = false ;
 
@@ -196,8 +198,9 @@ ti = tic ;
 if profiler ; profile on ; end
 for f = 1:nF
     for m = 1:nMCMC
-        Amp = ((rand(1)*2-1)+1i*(rand(1)*2-1))*U ;
-        Signal = sum(U.'*sum(exp(1i*F(f).'*t),1),1) ; 
+        Amp = ((rand(1)*2-1)+1i*(rand(1)*2-1)) ;
+        Amp = Amp./abs(Amp)*U ;
+        Signal = Amp*exp(1i*F(f).'*t) ;
         Rn = rand(size(Signal))*2-1 ;
         In = rand(size(Signal))*2-1 ;
         noise = (Rn+1i*In) ;
@@ -233,13 +236,13 @@ maxSE = max(SE,[],2) ; ... meandK + std(dK,0,3) ;
 
 
 clf ;
-plot(F,mindK,':k') ;
-plot(F,meandK,'.-k','markersize',20) ;
-plot(F,maxdK,':k') ;
-plot(F,tMSE,'.r','markersize',35) ;
-plot(F,maxSE,':r') ;
-plot(F,minSE,':r') ;
-plot(F,stdK,'ob','markersize',20) ;
+plot(F/pi,mindK,':k') ;
+plot(F/pi,meandK,'.-k','markersize',20) ;
+plot(F/pi,maxdK,':k') ;
+plot(F/pi,tMSE,'.r','markersize',35) ;
+plot(F/pi,maxSE,':r') ;
+plot(F/pi,minSE,':r') ;
+plot(F/pi,stdK,'ob','markersize',20) ;
 set(gca,'xscale','log','yscale','log') ;
 
 
@@ -256,14 +259,12 @@ Nsnap = 100 ; % Number of Snapshots
 F = [-.023-.1i*0]*pi ; % Tones (normalized freq.)
 U = [1] ; % Amplitudes
 SNR = logspace(-1,4,10) ;
-nMCMC = 100 ;
+nMCMC = 200 ;
 profiler = false ;
 
 t = 0:1:Ns-1 ; % time 
 nF = length(F) ; % number of tones
 nSNR = length(SNR) ; % number of SNR levels
-Amp = ((rand(Nsnap,1)*2-1)+1i*(rand(Nsnap,1)*2-1))*U ;
-Signal = Amp*sum(exp(1i*F.'*t),1) ; 
 
 EspArgs = {... Arguments for ESPRIT
            'DIMS_K' , 2 ; ...
@@ -283,6 +284,9 @@ ti = tic ;
 if profiler ; profile on ; end
 for s = 1:nSNR
     for m = 1:nMCMC
+        Amp = ((rand(Nsnap,1)*2-1)+1i*(rand(Nsnap,1)*2-1)) ;
+        Amp = Amp./abs(Amp)*U ;
+        Signal = Amp*sum(exp(1i*F.'*t),1) ; 
         Rn = rand(size(Signal))*2-1 ;
         In = rand(size(Signal))*2-1 ;
         noise = (Rn+1i*In) ;
@@ -332,7 +336,7 @@ Ns = 100 ; % Number of Sensors
 Nsnap = unique(round(logspace(log10(1),log10(500),10))) ; % Number of Snapshots
 F = [-.23-.1i*0]*pi ; % Tones (normalized freq.)
 U = [1] ; % Amplitudes
-SNR = 1e2 ;
+SNR = 10^2 ;
 nMCMC = 100 ;
 profiler = false ;
 
@@ -358,7 +362,8 @@ ti = tic ;
 if profiler ; profile on ; end
 for s = 1:nNsnap
     for m = 1:nMCMC
-        Amp = ((rand(Nsnap(s),1)*2-1)+1i*(rand(Nsnap(s),1)*2-1))*U ;
+        Amp = ((rand(Nsnap(s),1)*2-1)+1i*(rand(Nsnap(s),1)*2-1)) ;
+        Amp = Amp./abs(Amp)*U ;
         Signal = Amp*sum(exp(1i*F.'*t),1) ; 
         Rn = rand(size(Signal))*2-1 ;
         In = rand(size(Signal))*2-1 ;
@@ -417,10 +422,10 @@ clear all
 
 
 Ns = 100 ; % Number of Samples
-F = [-.023-.1i*0]*pi ; % Tones (normalized freq.)
+F = [-.23-.1i*0]*pi ; % Tones (normalized freq.)
 U = [1] ; % Amplitudes
 %K0 = unique(round(logspace(log10(3),log10(Ns),10))) ;
-K0 = unique(round(linspace(3,Ns,20))) ;
+K0 = unique(round(linspace(3,Ns-1,20))) ;
 SNR = 1e2 ;
 nMCMC = 100 ;
 profiler = false ;
@@ -447,7 +452,8 @@ if profiler ; profile on ; end
 for k = 1:nK0
     ARGS = [EspArgs{:},{'K0'},{K0(k)}] ;
     for m = 1:nMCMC
-        Amp = ((rand(1)*2-1)+1i*(rand(1)*2-1))*U ;
+        Amp = ((rand(1)*2-1)+1i*(rand(1)*2-1)) ;
+        Amp = Amp./abs(Amp)*U ;
         Signal = sum(Amp.'*sum(exp(1i*F.'*t),1),1) ;
         Rn = rand(size(Signal))*2-1 ;
         In = rand(size(Signal))*2-1 ;

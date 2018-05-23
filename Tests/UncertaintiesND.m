@@ -6,7 +6,7 @@ clear all
 
 
 Lk = [10 10 10] ;
-F = [-.023 ; 0.1 ; -.2] ; % .1 -.2 .06 .3 -.04 .01]*pi ; % Tones (normalized freq.)];%
+F = [.03 ; .04 ; -.02]*pi ; % .1 -.2 .06 .3 -.04 .01]*pi ; % Tones (normalized freq.)];%
 U = [1] ; % Amplitudes
 SNR = logspace(-1,6,10) ;
 nMCMC = 100 ;
@@ -35,7 +35,8 @@ ti = tic ;
 if profiler ; profile on ; end
 for s = 1:nSNR
     for m = 1:nMCMC
-        Amp = ((rand(1)*2-1)+1i*(rand(1)*2-1))*U ;
+        Amp = ((rand(1)*2-1)+1i*(rand(1)*2-1)) ;
+        Amp = Amp./abs(Amp)*U ;
         Signal = Amp*exp(1i*(XX*F(2,:)+YY*F(1,:)+ZZ*F(3,:))) ;
         Rn = rand(size(Signal))*2-1 ;
         In = rand(size(Signal))*2-1 ;
