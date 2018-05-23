@@ -6,9 +6,9 @@ clear all
 
 
 Ns = 50 ; % Number of Samples
-F = [-.023 .1 -.2 .06 .3 -.04 .01]*pi ; % Tones (normalized freq.)];%
+F = [-.023];% .1 -.2 .06 .3 -.04 .01]*pi ; % Tones (normalized freq.)];%
 U = [1] ; % Amplitudes
-SNR = logspace(-1,6,10) ;
+SNR = logspace(-1,3,10) ;
 nMCMC = 200 ;
 profiler = false ;
 
@@ -87,10 +87,10 @@ clear all
 %close all
 
 
-Ns = round(logspace(log10(5),log10(200),20)) ; % Number of Samples
-F = [-.23-.1i*0]*pi ; % Tones (normalized freq.)
+Ns = round(logspace(log10(20),log10(200),10)) ; % Number of Samples
+F = [.3]*pi ; % Tones (normalized freq.)
 U = [1] ; % Amplitudes
-SNR = 1e1 ;
+SNR = 1e2 ;
 nMCMC = 100 ;
 profiler = false ;
 
@@ -169,9 +169,9 @@ clear all
 
 
 Ns = 100 ; % Number of Samples
-F = logspace(log10(0.000001),log10(Ns/2.1),10)*pi/Ns ; % Tones (normalized freq.)
-U = [1] ; % Amplitudes
-SNR = 1e4 ;
+F = logspace(log10(0.000001),log10(Ns/2.01),10)*pi/Ns ; % Tones (normalized freq.)
+U = [10] ; % Amplitudes
+SNR = 1e0 ;
 nMCMC = 100 ;
 profiler = false ;
 
@@ -218,11 +218,18 @@ drawnow ;
 %[K,ind] = sort(K,2) ;
 %dK = dK(ind) ;
 
-stdK = var(K,0,3) ;
-meandK = mean(abs(dK),3) ;
-mindK = min(abs(dK),[],3) ; ... meandK - std(dK,0,3) ;
-maxdK = max(abs(dK),[],3) ; ... meandK + std(dK,0,3) ;
-tMSE = (mean(abs(K-repmat(F.',[1 1 nMCMC])).^2,3)) ;
+dK = reshape(dK,nF,[]) ;
+stdK = mean(var(K,0,3),2) ;
+meandK = mean(abs(dK),2) ;
+mindK = min(abs(dK),[],2) ; ... meandK - std(dK,0,3) ;
+maxdK = max(abs(dK),[],2) ; ... meandK + std(dK,0,3) ;
+
+[~,ind] = sort(real(F)) ;
+SE = abs(K-repmat(F.',[1 1 nMCMC])).^2 ;
+SE = reshape(SE,nF,[]) ;
+tMSE = (mean(SE,2)) ;
+minSE = min(SE,[],2) ; ... meandK - std(dK,0,3) ;
+maxSE = max(SE,[],2) ; ... meandK + std(dK,0,3) ;
 
 
 clf ;
@@ -230,9 +237,10 @@ plot(F,mindK,':k') ;
 plot(F,meandK,'.-k','markersize',20) ;
 plot(F,maxdK,':k') ;
 plot(F,tMSE,'.r','markersize',35) ;
+plot(F,maxSE,':r') ;
+plot(F,minSE,':r') ;
 plot(F,stdK,'ob','markersize',20) ;
-set(gca,'xscale','log') ;
-set(gca,'yscale','log') ;
+set(gca,'xscale','log','yscale','log') ;
 
 
 

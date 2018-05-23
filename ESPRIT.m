@@ -217,6 +217,33 @@ function OUT = ESPRIT(Signal,varargin)
                 case 'eigs'
                     [W,lambda] = eigs(Css,max(R0),'lm') ;
                     lambda = diag(lambda) ;
+                case 'svds'
+                    H = buildHss(Signal) ;
+                    [Us,Sigma,Vs] = svds(H,max(R0)) ;
+                    lambda = diag(Sigma).^2 ;
+                    W = Us ;
+                case 'mysvd'
+                    H = buildHss(Signal) ;
+                    if  size(H,1) <= size(H,2)
+                        C = H*H';
+                        [Us,Lambda] = eigs(C,max(R0));
+                        [lambda,ix] = sort(abs(diag(Lambda)),'descend');
+                        Us = Us(:,ix);   
+                        Vs = H'*Us;
+                        sigma = sqrt(lambda);
+                        Vs = bsxfun(@(x,c)x./c, Vs, sigma');
+                        Sigma = diag(sigma);
+                    else
+                        C = H'*H; 
+                        [Vs,Lambda] = eigs(C,max(R0));
+                        [lambda,ix] = sort(abs(diag(Lambda)),'descend');
+                        Vs = Vs(:,ix);    
+                        Us = H*Vs;
+                        sigma = sqrt(lambda);
+                        Us = bsxfun(@(x,c)x./c, Us, sigma');
+                        Sigma = diag(sigma);
+                    end
+                    W = Us ;
             end
         else % Approximate with one QR iteration (Badeau-style)
             Cxy = Css*W0 ;
@@ -279,7 +306,7 @@ function OUT = ESPRIT(Signal,varargin)
         
     
 % ESTIMATE AMPLITUDES
-    if COMPUTE_dK || COMPUTE_U 
+    if COMPUTE_U || COMPUTE_dK
         if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Amplitude Estimation : ') ; lastTime = tic ; end
         computeU ;
         A ;
@@ -299,7 +326,11 @@ function OUT = ESPRIT(Signal,varargin)
         OUT.K = K ;
         OUT.dK = dK ;
         OUT.U = U ;
-        OUT.SignalModel = permute(reshape(SignalModel,[Lp Lk]),permDims) ;
+        if isempty(DIMS_P)
+            OUT.SignalModel = reshape(SignalModel,Lk) ;
+        else
+            OUT.SignalModel = permute(reshape(SignalModel,[Lp Lk]),permDims) ;
+        end
     % Sizes
         OUT.Lp = Lp ;
         OUT.Lk = Lk ;
@@ -388,7 +419,7 @@ function OUT = ESPRIT(Signal,varargin)
                 Css = SIG*SIG' ;
             end
         % Normalize
-            Css = Css;%/(prod(Mk)*length(indP)) ;
+            Css = Css/(prod(Mk)*length(indP)) ;
     end
 
 
@@ -457,15 +488,13 @@ function OUT = ESPRIT(Signal,varargin)
                 end
             % Build selection MATRICES
                 if nargout>3 % If Jup and Jdwn are needed
+                    I = eye(prod(Kk)) ;
                     % Jup
-                        Jup = diag(double(indUp)) ;
-                        Jup(~any(Jup,2),:) = [] ;
+                        Jup = I(indUp,:) ;
                     % Jdwn
-                        Jdwn = diag(double(indDwn1)) ;
-                        Jdwn(~any(Jdwn,2),:) = [] ;
+                        Jdwn = I(indDwn1,:) ;
                         if any(isCOS.*shift) % Cosinus searched in the shift
-                            Jdwn2 = diag(double(indDwn2)) ;
-                            Jdwn2(~any(Jdwn2,2),:) = [] ;
+                            Jdwn2 = I(indDwn2,:) ;
                             Jdwn = (Jdwn + Jdwn2)/2 ;
                         end
                 end
@@ -540,10 +569,13 @@ function OUT = ESPRIT(Signal,varargin)
         % Wavevectors in the SHIFT basis
             shiftsCOS = logical(repmat(isCOS(:)',[size(SHIFTS,1) 1])) ;
             %shiftsCOS = logical(repmat(isCOS(:),[1 1])) ;
-            %K = log(Z)/1i ;
-            K = zeros(size(Z)) ;
-            K(~shiftsCOS,:) = log(Z(~shiftsCOS,:))/1i ; % FUNC = 'EXP' ;
-            K(shiftsCOS,:) = acos(Z(shiftsCOS,:)) ; % FUNC = 'COS' ;
+            if 0
+                K = zeros(size(Z)) ;
+                K(~shiftsCOS,:) = log(Z(~shiftsCOS,:))/1i ; % FUNC = 'EXP' ;
+                K(shiftsCOS,:) = acos(Z(shiftsCOS,:)) ; % FUNC = 'COS' ;
+            else
+                K = log(Z)/1i ;
+            end
         % Wavevectors in the cartesian basis
             K = (SHIFTS*diag(DECIM_K))\(K) ;
     end
@@ -594,41 +626,55 @@ function OUT = ESPRIT(Signal,varargin)
 %         % Delta Signal
 %             dS = Signal-SignalModel ;
 %         % Delta signal matrix
-%             dH = buildHss(dS)/sqrt(prod(Mk)*length(indP)^1)/prod(DECIM_K)/sqrt(max(1,prod(Mk./Kk))) ; % %
-%         % Partial Vandermonde matrices
-%             P = buildVandermonde(Kk) ;
-%             Q = buildVandermonde(Mk) ;
-%         % Complete right-Vandermonde Matrix
-%             QQ = zeros(prod(Mk)*length(indP),R0(R)) ;
-%             for p = 1:length(indP)
-%                 QQ((1:prod(Mk))+prod(Mk)*(p-1),:) = Q*diag(A(:,indP(p))) ;
-%             end
+%             dH = buildHss(dS) ;
+%         % Pure signal matrix
+%             H = buildHss(SignalModel) ;
+%         % Signal subspace of the noiseless signal
+%             [Us,omega] = eig(H*H'/prod(Mk)/length(indP),'vector');
+%             [~,ind] = sort(omega,'descend') ;
+%             ind = ind(1:R0(R)) ;
+%             Us = Us(:,ind) ;
+%             omega = omega(ind) ;
+%         % Signal subspace perturbation
+%             dUs = (eye(size(dH,1))-Us*Us')*dH*pinv(H)*Us ;%
+%             %dUs = W-Us ;%
 %         % Uncertainties
+%             T = 1 ;
+%             invT = 1 ;
+% %             [T,~] = extractPoles(R) ;
+% %             invT = inv(T) ;
 %             shifts = eye(length(DIMS_K)) ; % /!\ SHIFTS IS DEFAULT HERE !
-%             for s = 1:size(K,1)
-%                 [~,~,~,Jup,Jdwn] = selectMatrices(shifts(s,:)) ;
-%                 for r = 1:size(K,2)
-%                     br = [zeros(r-1,1) ; 1 ; zeros(size(K,2)-r,1)] ;
-%                     arn = exp(1i*K(s,r)) ;
-%                     vrn = br'*((Jup*P)\(Jdwn-arn*Jup)) ;
-%                     xr = QQ.'\br ;
-%                     dK(s,r) = (abs(vrn*dH*xr).^2/(abs(arn).^2)) ;
+%             for n = 1:size(K,1)
+%                 [~,~,~,Jup,Jdwn] = selectMatrices(shifts(n,:)) ;
+%                 Fn = (Jup*Us)\(Jdwn*Us) ;
+%                 dFn = Fn*(Jdwn*Us)\(Jdwn*dUs) - (Jup*Us)\(Jup*dUs)*Fn ;
+%                 %dFn = (Jup*W)\(Jdwn*W) - (Jup*Us)\(Jdwn*Us) ;
+%                 for o = 1:size(K,2)
+%                     darn = invT(:,o).'*dFn*T(:,o) ;
+%                     dK(n,o) = abs(darn/exp(1i*K(n,o)))^2 ;
+%                     %dK(s,r) = abs(darn/K(s,r))^2 ;
 %                 end
 %             end 
 %     end
 
 
+% UNCERTAINTY ESTIMATION dK
     function computeUncertainties
         % Init
             dK = zeros(size(K)) ;
         % Delta Signal
             dS = Signal-SignalModel ;
         % Delta signal matrix
-            H = buildHss(Signal) ;
-            dH = buildHss(dS)/sqrt(prod(Mk)*length(indP)^1)/prod(DECIM_K)/sqrt(max(1,prod(Mk./Kk))) ; % %
+            dH = buildHss(dS)*sqrt(R0(R))/prod(DECIM_K) ; % %
         % Partial Vandermonde matrices
-            P = buildVandermonde(Kk) ;
-            Q = buildVandermonde(Mk) ;
+            V = buildVandermonde(Lk) ;
+            P = V(indHbH{1}(:,1),:) ;
+            Q = V(indHbH{1}(1,:),:) ;
+            for i = 2:n_indHbH % If cosinuses
+                P = P + V(indHbH{2}(:,1),:) ; 
+            end
+            %P = P*(norm(P)) ;
+            %Q = Q*(norm(Q)) ;
         % Complete right-Vandermonde Matrix
             QQ = zeros(prod(Mk)*length(indP),R0(R)) ;
             for p = 1:length(indP)
@@ -636,54 +682,17 @@ function OUT = ESPRIT(Signal,varargin)
             end
         % Uncertainties
             shifts = eye(length(DIMS_K)) ; % /!\ SHIFTS IS DEFAULT HERE !
-            [T,~] = extractPoles(R) ;
             for s = 1:size(K,1)
                 [~,~,~,Jup,Jdwn] = selectMatrices(shifts(s,:)) ;
                 for r = 1:size(K,2)
                     br = [zeros(r-1,1) ; 1 ; zeros(size(K,2)-r,1)] ;
                     arn = exp(1i*K(s,r)) ;
                     vrn = br'*((Jup*P)\(Jdwn-arn*Jup)) ;
-                    xr = (QQ.'\br) ;
-                    %xr = (conj(QQ)*QQ.')\conj(QQ)*br ; 
-                    %xr = (H\W(:,1:R0(R)))*T(:,r) ;
-                    %xr = pinv(H)*W(:,1:R0(R))*T(:,r) ;
-                    dK(s,r) = (abs(vrn*dH*xr).^2/(abs(arn).^2)) ;
+                    xr = (QQ.')\br ;
+                    dK(s,r) = abs(vrn*dH*xr/arn)^2/(prod(Mk)*length(indP)*max(1,prod(Mk./Kk))) ;
                 end
             end 
     end
-
-
-%     function computeUncertainties 
-%         % Init
-%             dK = zeros(size(K)) ;
-%         % Delta Signal
-%             dS = Signal-SignalModel ;
-%         % Delta signal matrix
-%             H = buildHss(Signal) ;
-%             dH = buildHss(dS) ;
-%         % Signal subspace perturbation
-%             Us = W(:,1:R0(R)) ;
-%             dW = (eye(prod(Kk))-Us*Us')*dH*(H\Us) ;
-%             %dW = dH*(H\Us) * diag(1./lambda(1:R0(R))); %dLs = mean(var(dS,0,2)) ; dW = 2*(dH*(H\Us)/(prod(Mk)) - .5*Us*dLs*eye(R0(R))) ;% * diag(1./lambda(1:R0(R)));% ;
-%         % Other matrices
-%             [T,~] = extractPoles(R) ;
-%             invT = inv(T) ;
-%         % Uncertainties
-%             shifts = eye(length(DIMS_K)) ; % /!\ SHIFTS IS DEFAULT HERE !
-%             for s = 1:size(K,1)
-%                 % Spectral matrix perturbation
-%                     [indUp,indDwn] = selectMatrices(shifts(s,:)) ;
-%                     F = computeF(R,s) ;
-%                     dF = Us(indUp,:)\(dW(indDwn,:)-dW(indUp,:)*F) ;
-%                     %dF = F*pinv(Us(indDwn,:))*dW(indDwn,:) - pinv(Us(indUp,:))*dW(indUp,:)*F ;
-%                     %dF = F*(Us(indDwn,:)\dW(indDwn,:)) - (Us(indUp,:)\dW(indUp,:))*F ;
-%                 % Poles perturbation
-%                     for r = 1:size(K,2)
-%                         dk = invT(r,:).'*dF*T(:,r) ;
-%                         dK(s,r) = (dk/exp(1i*K(s,r))) ;
-%                     end
-%             end 
-%     end
 
 
     
