@@ -6,9 +6,9 @@ clear all
 
 
 Ns = 100 ; % Number of Samples
-F = [.05]*pi%] ; % Tones (normalized freq.)];%]%
-U = [100] ; % Amplitudes
-SNR = logspace(-3,6,10) ;
+F = (linspace(-1,1,1)*.04 + .03)*pi*(1-.10i) ; %rand(1,8)*0.49*pi ; %[.05 -.1 .3 -.02]*pi%] ; % Tones (normalized freq.)];%]%
+U = [1] ; % Amplitudes
+SNR = logspace(-1,6,10) ;
 nMCMC = 100 ;
 profiler = false ;
 
@@ -88,11 +88,11 @@ clear all
 %close all
 
 
-Ns = round(logspace(log10(20),log10(200),20)) ; % Number of Samples
+Ns = round(logspace(log10(5),log10(200),20)) ; % Number of Samples
 F = [.23]*pi ; % Tones (normalized freq.)
 U = [1] ; % Amplitudes
 SNR = 1e2 ;
-nMCMC = 100 ;
+nMCMC = 1000 ;
 profiler = false ;
 
 nF = length(F) ; % number of tones
@@ -170,10 +170,10 @@ clear all
 %close all
 
 
-Ns = 100 ; % Number of Samples
-F = logspace(log10(0.000001),log10(Ns/2.01),10)*pi/Ns*(1+0i) ; % Tones (normalized freq.)
-U = [1] ; % Amplitudes
-SNR = 1e3 ;
+Ns = 300 ; % Number of Samples
+F = logspace(log10(0.000001),log10(Ns/2.01),10)*pi/Ns*(1+.0i) ; % Tones (normalized freq.)
+U = [100] ; % Amplitudes
+SNR = 1e2 ;
 nMCMC = 100 ;
 profiler = false ;
 
@@ -259,7 +259,7 @@ Nsnap = 100 ; % Number of Snapshots
 F = [-.023-.1i*0]*pi ; % Tones (normalized freq.)
 U = [1] ; % Amplitudes
 SNR = logspace(-1,4,10) ;
-nMCMC = 200 ;
+nMCMC = 100 ;
 profiler = false ;
 
 t = 0:1:Ns-1 ; % time 
@@ -332,7 +332,7 @@ clear all
 %close all
 
 
-Ns = 100 ; % Number of Sensors
+Ns = 10 ; % Number of Sensors
 Nsnap = unique(round(logspace(log10(1),log10(500),10))) ; % Number of Snapshots
 F = [-.23-.1i*0]*pi ; % Tones (normalized freq.)
 U = [1] ; % Amplitudes
@@ -427,7 +427,7 @@ U = [1] ; % Amplitudes
 %K0 = unique(round(logspace(log10(3),log10(Ns),10))) ;
 K0 = unique(round(linspace(3,Ns-1,20))) ;
 SNR = 1e2 ;
-nMCMC = 100 ;
+nMCMC = 1000 ;
 profiler = false ;
 
 t = 0:1:Ns-1 ; % time 

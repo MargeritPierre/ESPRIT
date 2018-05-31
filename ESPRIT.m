@@ -606,18 +606,18 @@ function OUT = ESPRIT(Signal,varargin)
         % Vandermonde Matrix
             V = buildVandermonde(Lk) ;
         % Shift for the conditionning
-            v0 = max(abs(V),[],1) ;
-            V = V*diag(1./v0) ;
+%             v0 = max(abs(V),[],1) ;
+%             V = V*diag(1./v0) ;
         % Signal reshaping
             S = Signal.' ;
         % Amplitude estimation
             A = V\S ;
-        % Vandermonde Shift conpensation
-            A = diag(v0)*A ;
-        % Reshaping
-            U = reshape(A.',[Lp , size(K,2)]) ;
         % "Pure" signal reconstruction
             SignalModel = (V*A).' ;
+        % Vandermonde Shift compensation
+%             A = diag(1./v0)*A ;
+        % Reshaping
+            U = reshape(A.',[Lp , size(K,2)]) ;
     end
 
 
@@ -628,18 +628,18 @@ function OUT = ESPRIT(Signal,varargin)
         % Delta Signal
             dS = Signal-SignalModel ;
             dSzm = (dS-repmat(mean(dS,1),[size(dS,1) 1])).' ;
-            TAU = conj(dS.'*conj(dS)) ; %dSzm*dSzm' ;
+            TAU = conj(dS.'*conj(dS)) ; %dSzm*dSzm' ; %
             %dH = buildHss(dS) ;
         % Partial Vandermonde matrices
             V = buildVandermonde(Lk) ;
-            V = V*diag(1./max(abs(V),[],1)) ;
+            %V = V*diag(1./max(abs(V),[],1)) ;
             P = V(indHbH{1}(:,1),:) ;
             Q = V(indHbH{1}(1,:),:) ;
             for i = 2:n_indHbH % If cosinuses
                 P = P + V(indHbH{2}(:,1),:) ; 
             end
             P = P./n_indHbH ;
-            P = P*diag(1./P(1,:)) ;
+            %P = P*diag(1./P(1,:)) ;
         % Complete right-Vandermonde Matrix
             QQ = repmat(Q,[length(indP) 1]) ;
             QA = zeros(prod(Mk)*length(indP),R0(R)) ;
@@ -648,7 +648,8 @@ function OUT = ESPRIT(Signal,varargin)
             end
         % Uncertainties
             shifts = eye(length(DIMS_K)) ; % /!\ SHIFTS IS DEFAULT HERE !
-            x = conj(QA)/norm(QQ)^2 ;
+            %x = (buildHss(SignalModel)'*W(:,1:R0(R))*diag(1./(lambda(1:R0(R)))))*(W(:,1:R0(R))\P)/norm(QQ)^2 ; x = Vs*Sigma^-1*T
+            x = conj(QA)/(QQ'*QQ) ;%norm(QQ)^2 ; % ; %(QA\eye(prod(Mk)*length(indP))).' ; %QQ.'\eye(R0(R)) ; % 
             for s = 1:size(K,1)
                 [~,~,~,Jup,Jdwn] = selectMatrices(shifts(s,:)) ;
                 vn = (Jup*P)\eye(size(Jdwn,1)) ;
@@ -661,8 +662,9 @@ function OUT = ESPRIT(Signal,varargin)
                         VRN = reshape(vrn',[Kk 1]) ;
                         XR = reshape(conj(x(:,r)),[Mk length(indP)]) ;
                         ZN = convn(VRN,XR) ;
-                        dK(s,r) = var(dS(:))*norm(ZN(:)/prod(DECIM_K))^2 ;
+                        %dK(s,r) = var(dS(:))*norm(ZN(:)/prod(DECIM_K))^2 ;
                         %dK(s,r) = trace(abs(ZN'*TAU*ZN))/length(indP)/prod(DECIM_K)^2 ;
+                        dK(s,r) = trace(abs(ZN'*diag(diag(TAU))*ZN))/length(indP)/prod(DECIM_K)^2 ;
                     end
                 end
             end
