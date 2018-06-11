@@ -662,9 +662,9 @@ function OUT = ESPRIT(Signal,varargin)
                         VRN = reshape(vrn',[Kk 1]) ;
                         XR = reshape(conj(x(:,r)),[Mk length(indP)]) ;
                         ZN = convn(VRN,XR) ;
-                        %dK(s,r) = var(dS(:))*norm(ZN(:)/prod(DECIM_K))^2 ;
+                        dK(s,r) = var(dS(:))*norm(ZN(:)/prod(DECIM_K))^2 ;
                         %dK(s,r) = trace(abs(ZN'*TAU*ZN))/length(indP)/prod(DECIM_K)^2 ;
-                        dK(s,r) = trace(abs(ZN'*diag(diag(TAU))*ZN))/length(indP)/prod(DECIM_K)^2 ;
+                        %dK(s,r) = trace(abs(ZN'*diag(diag(TAU))*ZN))/length(indP)/prod(DECIM_K)^2 ;
                     end
                 end
             end
