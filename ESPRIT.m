@@ -627,12 +627,23 @@ function OUT = ESPRIT(Signal,varargin)
             dK = zeros(size(K)) ;
         % Delta Signal
             dS = Signal-SignalModel ;
-            dSzm = (dS-repmat(mean(dS,1),[size(dS,1) 1])).' ;
-            TAU = conj(dS.'*conj(dS)) ; %dSzm*dSzm' ; %
+            %dSzm = (dS-repmat(mean(dS,1),[size(dS,1) 1])).' ;
+            %TAU = conj(dS.'*conj(dS)) ; %dSzm*dSzm' ; %
             %dH = buildHss(dS) ;
+        % M Matrix
+            Ip = speye(length(indP)) ;
+            I = speye(prod(Lk)) ;
+            M = sparse(prod(Kk)*prod(Mk)*length(indP),prod(Lk)*length(indP)) ;
+            for m = 1:prod(Mk)
+                Im = I(indHbH{1}(:,m),:) ;
+                for i = 2:n_indHbH
+                    Im = Im + I(indHbH{i}(:,m),:) ;
+                end
+                Mm = kron(Ip,Im);
+                M((1:prod(Kk)*length(indP))+(m-1)*(prod(Kk)*length(indP)),:) = Mm ;
+            end
         % Partial Vandermonde matrices
             V = buildVandermonde(Lk) ;
-            %V = V*diag(1./max(abs(V),[],1)) ;
             P = V(indHbH{1}(:,1),:) ;
             Q = V(indHbH{1}(1,:),:) ;
             for i = 2:n_indHbH % If cosinuses
@@ -641,30 +652,32 @@ function OUT = ESPRIT(Signal,varargin)
             P = P./n_indHbH ;
             %P = P*diag(1./P(1,:)) ;
         % Complete right-Vandermonde Matrix
-            QQ = repmat(Q,[length(indP) 1]) ;
+            %QQ = repmat(Q,[length(indP) 1]) ;
             QA = zeros(prod(Mk)*length(indP),R0(R)) ;
             for p = 1:length(indP) 
-                QA((1:prod(Mk))+(p-1)*prod(Mk),:) = Q*diag(1./A(:,indP(p))) ;
+                QA((1:prod(Mk))+(p-1)*prod(Mk),:) = Q*diag(A(:,indP(p))) ;
             end
-        % Uncertainties
+        % Uncertainties 
             shifts = eye(length(DIMS_K)) ; % /!\ SHIFTS IS DEFAULT HERE !
-            %x = (buildHss(SignalModel)'*W(:,1:R0(R))*diag(1./(lambda(1:R0(R)))))*(W(:,1:R0(R))\P)/norm(QQ)^2 ; x = Vs*Sigma^-1*T
-            x = conj(QA)/(QQ'*QQ) ;%norm(QQ)^2 ; % ; %(QA\eye(prod(Mk)*length(indP))).' ; %QQ.'\eye(R0(R)) ; % 
+            x = (QA\eye(size(QA,1)))' ;
             for s = 1:size(K,1)
                 [~,~,~,Jup,Jdwn] = selectMatrices(shifts(s,:)) ;
                 vn = (Jup*P)\eye(size(Jdwn,1)) ;
                 for r = 1:size(K,2)
-                    arn = V(2,r) ; %exp(1i*K(s,r)*DECIM_K(shifts(s,:)==1)) ;
-                    vrn = vn(r,:)*(Jdwn-arn*Jup) ;
+                    arn = P(2,r) ; exp(1i*K(s,r)) ;  %exp(1i*K(s,r)*DECIM_K(shifts(s,:)==1)) ;
+                    vrn = (vn(r,:)*(Jdwn-arn*Jup))' ;
                     if 0 % UNCERTAINTY (DOES NOT WORK WELL...)
-                        %dK(s,r) = abs(vrn*dH*conj(x(:,r))/arn/prod(DECIM_K))^2 ;
-                    else % MEAN SQUARE ERROR /!\ WHITE GAUSSIAN NOISE HYPOTHESIS !
-                        VRN = reshape(vrn',[Kk 1]) ;
-                        XR = reshape(conj(x(:,r)),[Mk length(indP)]) ;
+                        dK(s,r) = abs(vrn'*dH*x(:,r)/arn/prod(DECIM_K))^2 ;
+                    elseif 0 % MEAN SQUARE ERROR /!\ WHITE GAUSSIAN NOISE HYPOTHESIS !
+                        VRN = reshape(vrn,[Kk 1]) ;
+                        XR = reshape(x(:,r),[Mk length(indP)]) ;
                         ZN = convn(VRN,XR) ;
-                        dK(s,r) = var(dS(:))*norm(ZN(:)/prod(DECIM_K))^2 ;
-                        %dK(s,r) = trace(abs(ZN'*TAU*ZN))/length(indP)/prod(DECIM_K)^2 ;
-                        %dK(s,r) = trace(abs(ZN'*diag(diag(TAU))*ZN))/length(indP)/prod(DECIM_K)^2 ;
+                        dK(s,r) = var(dS(:))*norm(ZN(:))^2/prod(DECIM_K)^2 ; % White Gaussian Uniform
+                        %dK(s,r) = trace(abs(ZN'*diag(diag(TAU))*ZN))/length(indP)/prod(DECIM_K)^2 ; % White Gaussian Heterogeneous
+                    else
+                        zn = kron((x(:,r)),vrn) ;
+                        %dK(s,r) = var(dS(:))*norm(zn'*M)^2/prod(DECIM_K)^2 ; % White Gaussian Uniform
+                        dK(s,r) = norm(zn'*M)^2/prod(DECIM_K)^2 ; % White Gaussian Uniform of variance = 1
                     end
                 end
             end
