@@ -568,9 +568,10 @@ function OUT = ESPRIT(Signal,varargin)
             indDiag = repmat(eye(R0(r)),[1 size(SHIFTS,1)])==1 ;
             Z = reshape(PHI(indDiag),[R0(r) size(SHIFTS,1)]).' ;
         % Wavevectors in the SHIFT basis
-            shiftsCOS = logical(repmat(isCOS(:)',[size(SHIFTS,1) 1])) ;
+            shiftsCOS = any(logical(repmat(isCOS(:)',[size(SHIFTS,1) 1])).*SHIFTS,2) ;
             %shiftsCOS = logical(repmat(isCOS(:),[1 1])) ;
-            if 0
+            if 1
+                
                 K = zeros(size(Z)) ;
                 K(~shiftsCOS,:) = log(Z(~shiftsCOS,:))/1i ; % FUNC = 'EXP' ;
                 K(shiftsCOS,:) = acos(Z(shiftsCOS,:)) ; % FUNC = 'COS' ;
@@ -627,34 +628,27 @@ function OUT = ESPRIT(Signal,varargin)
             dK = zeros(size(K)) ;
         % Delta Signal
             dS = Signal-SignalModel ;
-            dSzm = (dS-repmat(mean(dS,1),[size(dS,1) 1])).' ;
-            TAU = conj(dS.'*conj(dS)) ; %dSzm*dSzm' ; %
+            %dSzm = (dS-repmat(mean(dS,1),[size(dS,1) 1])).' ;
+            %TAU = conj(dS.'*conj(dS)) ;% dSzm*dSzm' ; % %
             %dH = buildHss(dS) ;
         % Partial Vandermonde matrices
             V = buildVandermonde(Lk) ;
             %V = V*diag(1./max(abs(V),[],1)) ;
             P = V(indHbH{1}(:,1),:) ;
             Q = V(indHbH{1}(1,:),:) ;
-            for i = 2:n_indHbH % If cosinuses
-                P = P + V(indHbH{2}(:,1),:) ; 
-            end
-            P = P./n_indHbH ;
-            %P = P*diag(1./P(1,:)) ;
         % Complete right-Vandermonde Matrix
-            QQ = repmat(Q,[length(indP) 1]) ;
             QA = zeros(prod(Mk)*length(indP),R0(R)) ;
             for p = 1:length(indP) 
-                QA((1:prod(Mk))+(p-1)*prod(Mk),:) = Q*diag(1./A(:,indP(p))) ;
+                QA((1:prod(Mk))+(p-1)*prod(Mk),:) = Q*diag(A(:,indP(p))) ;
             end
         % Uncertainties
             shifts = eye(length(DIMS_K)) ; % /!\ SHIFTS IS DEFAULT HERE !
-            %x = (buildHss(SignalModel)'*W(:,1:R0(R))*diag(1./(lambda(1:R0(R)))))*(W(:,1:R0(R))\P)/norm(QQ)^2 ; x = Vs*Sigma^-1*T
-            x = conj(QA)/(QQ'*QQ) ;%norm(QQ)^2 ; % ; %(QA\eye(prod(Mk)*length(indP))).' ; %QQ.'\eye(R0(R)) ; % 
+            x = (QA\eye(size(QA,1))).' ; 
             for s = 1:size(K,1)
                 [~,~,~,Jup,Jdwn] = selectMatrices(shifts(s,:)) ;
                 vn = (Jup*P)\eye(size(Jdwn,1)) ;
                 for r = 1:size(K,2)
-                    arn = V(2,r) ; %exp(1i*K(s,r)*DECIM_K(shifts(s,:)==1)) ;
+                    arn = V(2,r) ;
                     vrn = vn(r,:)*(Jdwn-arn*Jup) ;
                     if 0 % UNCERTAINTY (DOES NOT WORK WELL...)
                         %dK(s,r) = abs(vrn*dH*conj(x(:,r))/arn/prod(DECIM_K))^2 ;
