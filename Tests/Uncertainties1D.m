@@ -5,8 +5,8 @@ clear all
 %close all
 
 
-Ns = 100 ; % Number of Samples
-F = (linspace(-1,1,1)*.04 + .03)*pi*(1-.10i) ; %rand(1,8)*0.49*pi ; %[.05 -.1 .3 -.02]*pi%] ; % Tones (normalized freq.)];%]%
+Ns = 50 ; % Number of Samples
+F = 0.1 ; (linspace(-1,1,1)*.04 + .03)*pi*(1-.10i) ; %rand(1,8)*0.49*pi ; %[.05 -.1 .3 -.02]*pi%] ; % Tones (normalized freq.)];%]%
 U = [1] ; % Amplitudes
 SNR = logspace(-1,6,10) ;
 nMCMC = 100 ;
@@ -19,7 +19,7 @@ nSNR = length(SNR) ; % number of SNR levels
 EspArgs = {... Arguments for ESPRIT
            'DIMS_K' , 2 ; ...
            'R0' , nF ; ...
-           'DECIM' , [1 1] ; ...
+           'DECIM' , [1 10] ; ...
            'FUNC' , 'exp' ; ...
            'FIT' , 'LS' ; ...
            'SOLVER' , 'eig' ; ...
@@ -170,8 +170,8 @@ clear all
 %close all
 
 
-Ns = 300 ; % Number of Samples
-F = logspace(log10(0.000001),log10(Ns/2.01),10)*pi/Ns*(1+.0i) ; % Tones (normalized freq.)
+Ns = 100 ; % Number of Samples
+F = logspace(log10(0.000001),log10(Ns/2.01),10)*pi/Ns*(1+.05i) ; % Tones (normalized freq.)
 U = [100] ; % Amplitudes
 SNR = 1e2 ;
 nMCMC = 100 ;
