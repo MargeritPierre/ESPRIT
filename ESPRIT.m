@@ -569,16 +569,9 @@ function OUT = ESPRIT(Signal,varargin)
             Z = reshape(PHI(indDiag),[R0(r) size(SHIFTS,1)]).' ;
         % Wavevectors in the SHIFT basis
             shiftsCOS = any(logical(repmat(isCOS(:)',[size(SHIFTS,1) 1])).*SHIFTS,2) ;
-            %shiftsCOS = logical(repmat(isCOS(:),[1 1])) ;
-            if 1
-                
-                K = zeros(size(Z)) ;
-                K(~shiftsCOS,:) = log(Z(~shiftsCOS,:))/1i ; % FUNC = 'EXP' ;
-                K(shiftsCOS,:) = acos(Z(shiftsCOS,:)) ; % FUNC = 'COS' ;
-            else
-                K = log(Z)/1i ; % FUNC = 'EXP' ;
-                %K = acos(Z) ; % FUNC = 'COS' ;
-            end
+            K = zeros(size(Z)) ;
+            K(~shiftsCOS,:) = log(Z(~shiftsCOS,:))/1i ; % FUNC = 'EXP' ;
+            K(shiftsCOS,:) = acos(Z(shiftsCOS,:)) ; % FUNC = 'COS' ;
         % Wavevectors in the cartesian basis
             K = (SHIFTS*diag(DECIM_K))\(K) ;
     end
@@ -624,73 +617,80 @@ function OUT = ESPRIT(Signal,varargin)
 
 % UNCERTAINTY ESTIMATION dK
     function computeUncertainties
+        % Options (hard-coded for now)
+            lin_method = 'kron' ; % Linearization method for the variance: 'none', 'kron' or 'conv'
+            covar_estim = 'uniform' ; % estimation of the perturbation covariance: 'uniform', 'diagonal' or 'full'
         % Init
             dK = zeros(size(K)) ;
-        % Delta Signal
+        % Signal perturbation
             dS = Signal-SignalModel ;
             %dSzm = (dS-repmat(mean(dS,1),[size(dS,1) 1])).' ;
-<<<<<<< HEAD
             %TAU = conj(dS.'*conj(dS)) ;% dSzm*dSzm' ; % %
-=======
             %TAU = conj(dS.'*conj(dS)) ; %dSzm*dSzm' ; %
->>>>>>> 1697f00fe8ebdca4053f82670a62463be07de382
             %dH = buildHss(dS) ;
-        % M Matrix
-            Ip = speye(length(indP)) ;
-            I = speye(prod(Lk)) ;
-            M = sparse(prod(Kk)*prod(Mk)*length(indP),prod(Lk)*length(indP)) ;
-            for m = 1:prod(Mk)
-                Im = I(indHbH{1}(:,m),:) ;
-                for i = 2:n_indHbH
-                    Im = Im + I(indHbH{i}(:,m),:) ;
+        % Perturbation covariance
+            if ~strcmp(lin_method,'none')
+                switch covar_estim
+                    case 'uniform'
+                        var_dS = var(dS(:),0) ;
+                    case 'diagonal'
+                        var_dS = diag(var(dS,0,1)) ;
+                    case 'full'
+                        dSzm = (dS-repmat(mean(dS,1),[size(dS,1) 1])).' ;
+                        var_dS = dSzm*dSzm'/size(dSzm,2) ;
                 end
-                Mm = kron(Ip,Im);
-                M((1:prod(Kk)*length(indP))+(m-1)*(prod(Kk)*length(indP)),:) = Mm ;
+            end
+        % Selection matrices if needed
+            switch lin_method
+                case 'none'
+                    dH = buildHss(dS) ;
+                case 'kron'
+                    % M Matrix
+                        Ip = speye(length(indP)) ;
+                        I = speye(prod(Lk)) ;
+                        M = sparse(prod(Kk)*prod(Mk)*length(indP),prod(Lk)*length(indP)) ;
+                        for m = 1:prod(Mk)
+                            Im = I(indHbH{1}(:,m),:) ;
+                            for i = 2:n_indHbH
+                                Im = Im + I(indHbH{i}(:,m),:) ;
+                            end
+                            Mm = kron(Ip,Im);
+                            M((1:prod(Kk)*length(indP))+(m-1)*(prod(Kk)*length(indP)),:) = Mm ;
+                        end
+                case 'conv'
             end
         % Partial Vandermonde matrices
             V = buildVandermonde(Lk) ;
             P = V(indHbH{1}(:,1),:) ;
             Q = V(indHbH{1}(1,:),:) ;
         % Complete right-Vandermonde Matrix
-<<<<<<< HEAD
-=======
-            %QQ = repmat(Q,[length(indP) 1]) ;
->>>>>>> 1697f00fe8ebdca4053f82670a62463be07de382
             QA = zeros(prod(Mk)*length(indP),R0(R)) ;
             for p = 1:length(indP) 
                 QA((1:prod(Mk))+(p-1)*prod(Mk),:) = Q*diag(A(:,indP(p))) ;
             end
         % Uncertainties 
             shifts = eye(length(DIMS_K)) ; % /!\ SHIFTS IS DEFAULT HERE !
-<<<<<<< HEAD
-            x = (QA\eye(size(QA,1))).' ; 
-=======
+            %x = (QA\eye(size(QA,1))).' ; 
             x = (QA\eye(size(QA,1)))' ;
->>>>>>> 1697f00fe8ebdca4053f82670a62463be07de382
             for s = 1:size(K,1)
                 [~,~,~,Jup,Jdwn] = selectMatrices(shifts(s,:)) ;
                 vn = (Jup*P)\eye(size(Jdwn,1)) ;
                 for r = 1:size(K,2)
-<<<<<<< HEAD
                     arn = V(2,r) ;
-                    vrn = vn(r,:)*(Jdwn-arn*Jup) ;
-=======
-                    arn = P(2,r) ; exp(1i*K(s,r)) ;  %exp(1i*K(s,r)*DECIM_K(shifts(s,:)==1)) ;
+                    %vrn = vn(r,:)*(Jdwn-arn*Jup) ;
+                    arn = P(2,r) ;
                     vrn = (vn(r,:)*(Jdwn-arn*Jup))' ;
->>>>>>> 1697f00fe8ebdca4053f82670a62463be07de382
-                    if 0 % UNCERTAINTY (DOES NOT WORK WELL...)
-                        dK(s,r) = abs(vrn'*dH*x(:,r)/arn/prod(DECIM_K))^2 ;
-                    elseif 0 % MEAN SQUARE ERROR /!\ WHITE GAUSSIAN NOISE HYPOTHESIS !
-                        VRN = reshape(vrn,[Kk 1]) ;
-                        XR = reshape(x(:,r),[Mk length(indP)]) ;
-                        ZN = convn(VRN,XR) ;
-                        dK(s,r) = var(dS(:))*norm(ZN(:))^2/prod(DECIM_K)^2 ; % White Gaussian Uniform
-                        %dK(s,r) = trace(abs(ZN'*diag(diag(TAU))*ZN))/length(indP)/prod(DECIM_K)^2 ; % White Gaussian Heterogeneous
-                    else
-                        zn = kron((x(:,r)),vrn) ;
-                        %dK(s,r) = var(dS(:))*norm(zn'*M)^2/prod(DECIM_K)^2 ; % White Gaussian Uniform
-                        dK(s,r) = norm(zn'*M)^2/prod(DECIM_K)^2 ; % White Gaussian Uniform of variance = 1
+                    switch lin_method
+                        case 'none' % UNCERTAINTY (DOES NOT WORK WELL...)
+                            dK(s,r) = abs(vrn'*dH*x(:,r)/arn/prod(DECIM_K))^2 ;
+                        case 'conv' % LINEAR / BY CONVOLUTION (USE OF THE HANKEL SHAPE OF Hss)
+                            VRN = reshape(vrn,[Kk 1]) ;
+                            XR = reshape(x(:,r),[Mk length(indP)]) ;
+                            ZN = convn(VRN,XR) ;
+                        case 'kron' % LINEAR / BY VECTORIZATION (USES vec(A*X*B) = kron(B.',A)*vec(X) ) 
+                        zn = kron((x(:,r)),vrn)'*M ;
                     end
+                    dK(s,r) = zn*var_dS*zn'/prod(DECIM_K)^2 ;
                 end
             end
     end
