@@ -162,7 +162,8 @@ function OUT = ESPRIT(Signal,varargin)
         R0 = R0(R0<=prod(Kk)-1-max(sum(abs(SHIFTS),2))) ;
         
     % Sub-Hankel matrices indices
-        subIndH = cell(length(DIMS_K),1) ;
+        n_indHbH = any(isCOS)+1 ;
+        subIndH = cell(length(DIMS_K),n_indHbH) ;
         for d = 1:length(DIMS_K)
             switch lower(FUNC(d,:))
                 case 'exp'
@@ -176,7 +177,7 @@ function OUT = ESPRIT(Signal,varargin)
     % Hankel-block-Hankel matrix indices
         
         % Indices for each dimension (used in shift invariances and Vandermonde matrix)
-            indHbH_d = cell(length(DIMS_K),1) ;
+            indHbH_d = cell(length(DIMS_K),n_indHbH) ;
             D = 1:length(DIMS_K) ;
             for d = 1:length(D)
                 switch lower(FUNC(d,:))
@@ -193,7 +194,6 @@ function OUT = ESPRIT(Signal,varargin)
             
         % Complete indices
             indHbH = [] ;
-            n_indHbH = [] ;
             indP = [] ;
             indicesHbH ;
             
@@ -378,23 +378,36 @@ function OUT = ESPRIT(Signal,varargin)
                     indHbH{1} = indHbH{1} + (indHbH_d{d}-1)*prod(Lk(D<d)) ;
                 end
             else % SOME COSINUS SEARCHED
-                % How many indices matrix has to be built ? (only one if every FUNC=='exp')
-                    ind = false(size(indHbH_d)) ; 
-                    for i = 1:numel(ind) 
-                        ind(i) = ~isempty(indHbH_d{i}) ;
-                    end
-                    ind = ind*[1 0 ; 0 2] ;
-                    ind = num2cell(ind,2) ;
-                    ind = combvec(ind{:}) ;
-                    ind = ind(:,~any(ind==0,1)) ;
-                    n_indHbH = size(ind,2) ;
-                % Indices matrices
-                    indHbH = cell(n_indHbH,1) ;
-                    for i = 1:n_indHbH
-                        indHbH{i} = indHbH_d{1,ind(1,i)} ;
-                        D = 1:length(DIMS_K) ;
-                        for d = 2:length(DIMS_K)
-                            indHbH{i} = indHbH{i} + (indHbH_d{d,ind(d,i)}-1)*prod(Lk(D<d)) ;
+%                 % How many indices matrix has to be built ? (only one if every FUNC=='exp')
+%                     ind = false(size(indHbH_d)) ; 
+%                     for i = 1:numel(ind) 
+%                         ind(i) = ~isempty(indHbH_d{i}) ;
+%                     end
+%                     ind = ind*[1 0 ; 0 2] ;
+%                     ind = num2cell(ind,2) ;
+%                     ind = combvec(ind{:}) ;
+%                     ind = ind(:,~any(ind==0,1)) ;
+%                     n_indHbH = size(ind,2) ;
+%                 % Indices matrices
+%                     indHbH = cell(n_indHbH,1) ;
+%                     for i = 1:n_indHbH
+%                         indHbH{i} = indHbH_d{1,ind(1,i)} ;
+%                         D = 1:length(DIMS_K) ;
+%                         for d = 2:length(DIMS_K)
+%                             indHbH{i} = indHbH{i} + (indHbH_d{d,ind(d,i)}-1)*prod(Lk(D<d)) ;
+%                         end
+%                     end
+                % New version
+                    indHbH = {indHbH_d{1,:}} ;
+                    D = 1:length(DIMS_K) ;
+                    for d = 2:length(DIMS_K)
+                        indHbH{1} = indHbH{1} + (indHbH_d{d,1}-1)*prod(Lk(D<d)) ;
+                        if n_indHbH==2
+                            if isCOS(d)
+                                indHbH{2} = indHbH{2} + (indHbH_d{d,2}-1)*prod(Lk(D<d)) ;
+                            else
+                                indHbH{2} = indHbH{2} + (indHbH_d{d,1}-1)*prod(Lk(D<d)) ;
+                            end
                         end
                     end
             end
@@ -794,10 +807,10 @@ function OUT = ESPRIT(Signal,varargin)
             if ~paramSet(11) ; DEBUG = false ; end
             if ~paramSet(12) ; CRITERION = 'MDL' ; end
             if ~paramSet(13) ; SOLVER = 'eig' ; end
-            if ~paramSet(14) ; COMPUTE_U = true ; end
+            if ~paramSet(14) ; COMPUTE_U = false ; end
             if ~paramSet(15) ; K0 = [] ; end
             if ~paramSet(16) ; W0 = [] ; end
-            if ~paramSet(17) ; COMPUTE_dK = true ; end
+            if ~paramSet(17) ; COMPUTE_dK = false ; end
     end
 
 
