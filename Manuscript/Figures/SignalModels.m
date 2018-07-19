@@ -4,9 +4,11 @@ clear all
 
 
 L = [1 1]*20 ;
-fun = {'cos' 'exp'} ;
-K = [1*(1+1i) 5].' ;
-A = [1] ;
+R = 30 ;
+fun = {'exp' 'exp'} ;
+K = round((rand(length(L),R)*2-1)*6) ; 2*[2 0 ; 0 2].' ;
+A = (rand(1,R)*2-1)*1 ; [1 1] ;
+K
 
 D = length(L) ;
 de = ismember(fun,{'exp'}) ;
@@ -15,7 +17,7 @@ De = sum(de) ;
 Dc = sum(dc) ;
 R = size(K,2) ;
 
-K = K./repmat(L',[1 R])*pi ;
+K = K./repmat(L'-1,[1 R])*pi ;
 
 X = [] ;
 for d = 1:D

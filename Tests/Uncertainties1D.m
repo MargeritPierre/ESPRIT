@@ -25,6 +25,7 @@ EspArgs = {... Arguments for ESPRIT
            'SOLVER' , 'eig' ; ...
            'DEBUG' , false ; ...
            'K0' , [] ; ...
+           'COMPUTE_dK', true ;...
           }' ;
 
 K = zeros(nSNR,nF,nMCMC) ;
@@ -107,6 +108,7 @@ EspArgs = {... Arguments for ESPRIT
            'SOLVER' , 'eig' ; ...
            'DEBUG' , false ; ...
            'K0' , [] ; ...
+           'COMPUTE_dK', true ;...
           }' ;
 
 K = zeros(nNs,nF,nMCMC) ;
@@ -189,6 +191,7 @@ EspArgs = {... Arguments for ESPRIT
            'SOLVER' , 'eig' ; ...
            'DEBUG' , false ; ...
            'K0' , [] ; ...
+           'COMPUTE_dK', true ;...
           }' ;
 
 K = zeros(nF,1,nMCMC) ;
@@ -275,6 +278,7 @@ EspArgs = {... Arguments for ESPRIT
            'SOLVER' , 'eig' ; ...
            'DEBUG' , false ; ...
            'K0' , [Ns] ; ... 
+           'COMPUTE_dK', true ;...
           }' ;
 
 K = zeros(nSNR,nF,nMCMC) ;
@@ -332,7 +336,7 @@ clear all
 %close all
 
 
-Ns = 10 ; % Number of Sensors
+Ns = 20 ; % Number of Sensors
 Nsnap = unique(round(logspace(log10(1),log10(500),10))) ; % Number of Snapshots
 F = [-.23-.1i*0]*pi ; % Tones (normalized freq.)
 U = [1] ; % Amplitudes
@@ -353,6 +357,7 @@ EspArgs = {... Arguments for ESPRIT
            'SOLVER' , 'eig' ; ...
            'DEBUG' , false ; ...
            'K0' , [Ns] ; ... 
+           'COMPUTE_dK', true ;...
           }' ;
 
 K = zeros(nNsnap,nF,nMCMC) ;
@@ -398,12 +403,12 @@ minSE = min(SE,[],3) ; ... meandK - std(dK,0,3) ;
 maxSE = max(SE,[],3) ; ... meandK + std(dK,0,3) ;
 
 clf ;
-plot(Nsnap,mindK,':k') ;
+%plot(Nsnap,mindK,':k') ;
 plot(Nsnap,meandK,'.-k','markersize',20) ;
-plot(Nsnap,maxdK,':k') ;
+%plot(Nsnap,maxdK,':k') ;
 plot(Nsnap,tMSE,'.r','markersize',35) ;
-plot(Nsnap,maxSE,':r') ;
-plot(Nsnap,minSE,':r') ;
+%plot(Nsnap,maxSE,':r') ;
+%plot(Nsnap,minSE,':r') ;
 plot(Nsnap,stdK,'ob','markersize',20) ;
 set(gca,'xscale','log','yscale','log') ;
 
@@ -421,7 +426,7 @@ clear all
 %close all
 
 
-Ns = 100 ; % Number of Samples
+Ns = 50 ; % Number of Samples
 F = [-.23-.1i*0]*pi ; % Tones (normalized freq.)
 U = [1] ; % Amplitudes
 %K0 = unique(round(logspace(log10(3),log10(Ns),10))) ;
@@ -442,6 +447,7 @@ EspArgs = {... Arguments for ESPRIT
            'FIT' , 'LS' ; ...
            'SOLVER' , 'eig' ; ...
            'DEBUG' , false ; ...
+           'COMPUTE_dK', true ;...
           }' ;
 
 K = zeros(nK0,nF,nMCMC) ;
@@ -487,15 +493,17 @@ maxSE = max(SE,[],3) ; ... meandK + std(dK,0,3) ;
 
 
 clf ;
-plot(K0,mindK,':k') ;
+%plot(K0,mindK,':k') ;
 plot(K0,meandK,'.-k','markersize',20) ;
-plot(K0,maxdK,':k') ;
+%plot(K0,maxdK,':k') ;
 plot(K0,tMSE,'.r','markersize',35) ;
-plot(K0,maxSE,':r') ;
-plot(K0,minSE,':r') ;
+%plot(K0,maxSE,':r') ;
+%plot(K0,minSE,':r') ;
 plot(K0,stdK,'ob','markersize',20) ;
 %set(gca,'xscale','log') ;
 set(gca,'yscale','log') ;
+%axis tight 
+grid on
 
 
 
