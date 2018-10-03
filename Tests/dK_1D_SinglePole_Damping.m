@@ -4,7 +4,7 @@ clc
 clear all
 clf 
 
-L = 100 ;
+L = 200 ;
 K = 1:L-1 ;
 M = L-K+1 ;
  

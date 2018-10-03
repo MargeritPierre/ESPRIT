@@ -4,12 +4,12 @@ close all
 
 R = 5 ; 
 D = 3 ;
-Dc = [1 2 3] ;
+Dc = [] ; [1 2 3] ;
 De = setdiff(1:D,Dc) ;
 
-L = repmat(10,[1 D]) ;
+L = repmat(15,[1 D]) ;
 
-K = (rand(R,D)*2-1)*pi/2*.99+1i*(rand(R,D)*2-1)*pi/2*.99 ;
+K = (rand(R,D)*2-1)*pi/2*.99+1i*(rand(R,D)*2-1)*pi/2*.1 ;
 K(:,Dc) = acos(cos(K(:,Dc))) ;
 U = (rand(R,1)*2-1) ;
 
@@ -44,12 +44,19 @@ EspArgs = {... Arguments for ESPRIT
            'FIT' , 'LS' ; ...
            'SOLVER' , 'eig' ; ...
            'DEBUG' , false ; ...
-           'K0' , [] ; ...
+           'M/L' , [1/3] ; ...
           }' ;
-      
+t = tic ;      
 out = ESPRIT(SIGNAL,EspArgs{:}) ;
+toc(t) ;
 Kesp = out.K.' ;
-Kesp,K
+
+[~,indESP] = sort(real(Kesp(:,1))) ;
+[~,ind] = sort(real(K(:,1))) ;
+
+Kesp(indESP,:),K(ind,:)
+mean(mean(abs(Kesp(indESP,:)-K(ind,:))))
+out
 
 
 

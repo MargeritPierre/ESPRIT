@@ -4,26 +4,50 @@ function OUT = ESPRIT(Signal,varargin)
 %
 %   OUT = ESPRIT(Signal,varargin)
 %
-%   varargin parameters (and default values) : 
-%       CHOICE : 'auto' or 'manual' ('auto')
-%       SOLVER : 'eigs' or 'eig' ('eig') 
-%       CRITERION : 'ESTER' or 'MDL' ('MDL')
-%       CRIT_THRS : criterion threshold (1)
-%       COMPUTE_U : boolean to compute amplitudes (true)
-%       COMPUTE_dK : boolean to compute uncertainties (true)
-%       DIMS_K : dimensions of the wavevectors (ndims(Signal))  
-%       FUNC : type of function searched 'exp' or 'cos' (repmat('exp',[length(DIMS_K) 1]))
-%       R0 : signal order candidates (1:floor(min(arrayfun(@(d)size(Signal,d),DIMS_K)/2)))
-%       K0 : length(s) of the signal that gives the size of the autocovariance matrix ([] for an auto choice)
-%       W0 : signal subspace of a previous iteration ([] for a random subspace initialization)
-%       FIT : 'LS' or 'TLS' (TLS)
-%       DECIM : decimation factors (ones(1,ndims(Signal)))
+%   varargin parameters (and default values) : [] set the parameter to default
+%       CHOICE : not implemented 
+%           string : 'auto' or 'manual' ('auto')
+%       SOLVER : signal subspace estimation
+%           string : 'eigs' or 'eig' ('eig') 
+%       CRITERION : signal order choice criterion
+%           string : 'ESTER' or 'MDL' ('MDL')
+%       CRIT_THRS : signal order criterion threshold 
+%           1x1 double (1)
+%       COMPUTE_U : compute amplitudes 
+%           boolean (false)
+%       SIGNAL_MODEL : compute the signal model 
+%           boolean (false)
+%       COMPUTE_dK : compute uncertainties 
+%           boolean (false)
+%       DIMS_K : dimensions of the wavevectors 
+%           1xD integer (ndims(Signal))
+%       FUNC : type of function searched 
+%           Dx3 char : 'exp' or 'cos' (repmat('exp',[length(DIMS_K) 1]))
+%       R0 : signal order candidates 
+%           1xnR integer : (1:floor(min(arrayfun(@(d)size(Signal,d),DIMS_K)/2)))
+%       M/L : Spatial Smoothing ratio (gives the HbH matrix shape)
+%           1xD double : 0<M_d/L<1 (2/3)
+%               - 0 : no spatial smoothing (M = ones(1,D))
+%               - scalar : same M/L ratio for all dimensions
+%               - 1xD double : different for each dimension 
+%       W0 : signal subspace of a previous iteration 
+%           Prod(K)xMax(R0) double : ([])
+%               - [] for a random subspace initialization
+%       FIT : regression method for the spectral matrix estimation
+%           string : 'LS' or 'TLS' (TLS)
+%       DECIM : decimation factors 
+%           1xD integer : (ones(1,ndims(Signal)))
 %           - along DIMS_K : /!\ NYQUIST
-%           - along DIMS_P : reduce the size of Css. However, U is estimated at all points.
-%       SHIFTS : for multiresolution (eye(length(DIMS_K)))
-%       DEBUG : bool to prompt procedure state (false)
-%       STABILDIAG : bool to plot the stabilization diagram (false)
-%       MAC : correlation coefficient to link the poles by MAC values (0)
+%           - along DIMS_P : reduce the size of Css.
+%           Do not affect the estimation of U.
+%       SHIFTS : for multiresolution 
+%           QxD integer : (eye(length(DIMS_K)))
+%       DEBUG : prompt procedure state 
+%           boolean (false)
+%       STABILDIAG : plot the stabilization diagram 
+%           boolean (false)
+%       MAC : correlation coefficient to link the poles by MAC values 
+%           1x1 double : (0)
 %           - MAC == 0 : no MAC value computed
 %           - 0 < MAC < 1 : poles with corr > MAC are linked
 %
@@ -82,7 +106,7 @@ function OUT = ESPRIT(Signal,varargin)
         DIMS_K ; 
         FUNC ; 
         R0 ; 
-        K0 ;
+        M_L ;
         W0 ;
         FIT ; 
         DECIM ; 
@@ -120,18 +144,25 @@ function OUT = ESPRIT(Signal,varargin)
         % Decimation
             DECIM_K = DECIM(DIMS_K) ;
             DECIM_P = DECIM(DIMS_P) ;
+        % Directions of exponentials & cosinuses
+            isCOS = ismember(num2cell(FUNC,2)','cos') ;
+            isEXP = ~isCOS ;
             
     % Reshaping the signal
         Signal = permute(Signal,[DIMS_P DIMS_K]) ; % Sort dimensions
         Signal = reshape(Signal,[prod(Lp) prod(Lk)]) ;
         [~,permDims] = sort([DIMS_P DIMS_K]) ; % Used to rechape the signal model
+    
+    % Mean Value
+        %Signal = Signal-repmat(mean(Signal,2),[1 size(Signal,2)]) ;
         
     % Output Initialization
-        K = zeros([max(R0) length(DIMS_K)]) ;
-        dK = zeros([max(R0) length(DIMS_K)]) ;
-        U = zeros([max(R0) length(DIMS_P)+1]) ;
-        SignalModel = zeros(size(Signal)) ;
-        ESTER = zeros([size(SHIFTS,1) length(R0)]) ;
+        K = zeros([max(R0) length(DIMS_K)]) ; % Wavevectors Matrix
+        dK = zeros([max(R0) length(DIMS_K)]) ; % Estimated Variance
+        V = [] ; % Steering Matrix
+        U = zeros([max(R0) length(DIMS_P)+1]) ; % Amplitudes
+        SignalModel = [] ; % Reconstructed Signal Model
+        Hss = [] ;
         
         
         
@@ -142,8 +173,6 @@ function OUT = ESPRIT(Signal,varargin)
     % Determine the hankel matrix sizes
         Kk = [] ;
         Mk = [] ;
-        indP = [] ;
-        isCOS = [] ;
         setHankelSize() ;
         
     % Buil sub-Hankel matrices indices
@@ -167,50 +196,30 @@ function OUT = ESPRIT(Signal,varargin)
         
 % AUTOCOVARIANCE MATRIX
     if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Computing of Css : ') ; lastTime = tic ; end
-  
-        Css = buildCss ;
+        % Computation speedup
+            if prod(Kk)<prod(Mk)*length(indP)
+                transpCss = false ; % Css = H*H' , [W,lambda] = eig(Css)
+                Css = buildCss() ;
+            else
+                transpCss = true ; % Css = H'*H , [Wr,lambda] = eig(Css), W = H*W\diag(sqrt(lambda)) , 
+                Hss = buildHss(Signal) ;
+                Css = Hss'*Hss ;
+            end
         
         
         
 % SIGNAL SUBSPACE ESTIMATION        
     if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Eigendecomposition of Css : ') ; lastTime = tic ; end
     % Adjust signal order candidates
-        R0 = R0(R0<=prod(Kk)-1-max(sum(abs(SHIFTS),2))) ;
+        R0 = R0(R0<=size(Css,1)-1-max(sum(abs(SHIFTS),2))) ;
     % ESTIMATION
-        if isempty(W0) % re compute completely the signal subspace
+        if isempty(W0) % re-compute the signal subspace
             switch SOLVER
                 case 'eig'
                     [W,lambda] = eig(Css,'vector') ;
                 case 'eigs'
                     [W,lambda] = eigs(Css,max(R0),'lm') ;
                     lambda = diag(lambda) ;
-                case 'svds'
-                    H = buildHss(Signal) ;
-                    [Us,Sigma,Vs] = svds(H,max(R0)) ;
-                    lambda = diag(Sigma).^2 ;
-                    W = Us ;
-                case 'mysvd'
-                    H = buildHss(Signal) ;
-                    if  size(H,1) <= size(H,2)
-                        C = H*H';
-                        [Us,Lambda] = eigs(C,max(R0));
-                        [lambda,ix] = sort(abs(diag(Lambda)),'descend');
-                        Us = Us(:,ix);   
-                        Vs = H'*Us;
-                        sigma = sqrt(lambda);
-                        Vs = bsxfun(@(x,c)x./c, Vs, sigma');
-                        Sigma = diag(sigma);
-                    else
-                        C = H'*H; 
-                        [Vs,Lambda] = eigs(C,max(R0));
-                        [lambda,ix] = sort(abs(diag(Lambda)),'descend');
-                        Vs = Vs(:,ix);    
-                        Us = H*Vs;
-                        sigma = sqrt(lambda);
-                        Us = bsxfun(@(x,c)x./c, Us, sigma');
-                        Sigma = diag(sigma);
-                    end
-                    W = Us ;
             end
         else % Approximate with one QR iteration (Badeau-style)
             Cxy = Css*W0 ;
@@ -224,6 +233,11 @@ function OUT = ESPRIT(Signal,varargin)
     % KEEP the needed E.V only
         lambda = lambda(1:max(R0)) ;
         W = W(:,1:max(R0)) ;
+    % GET THE LEFT EIGENVECTORS
+        if transpCss
+            W = Hss*W ;
+            W = bsxfun(@(w,l)w./l, W, sqrt(lambda(:)).') ;
+        end
         
         
 % SIGNAL ORGER CRITERION
@@ -250,7 +264,7 @@ function OUT = ESPRIT(Signal,varargin)
                 case 'MDL'
                     MDL = (lambda(1:end-1)-lambda(2:end))./lambda(1:end-1) ;
                     CRIT = [MDL ; 0] ;
-                    CRIT = CRIT(1:max(R0)) ;
+                    CRIT = CRIT(R0) ;
                     % Save the criterion
                         OUT.MDL = MDL ;
             end
@@ -270,14 +284,19 @@ function OUT = ESPRIT(Signal,varargin)
     
 % EXTRACT THE WAVEVECTORS
     if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Pole Estimation : ') ; lastTime = tic ; end
-    extractPoles(R) ;
+    [T,beta] = extractPoles(R) ;
         
     
 % ESTIMATE AMPLITUDES
-    if COMPUTE_U || COMPUTE_dK
+    if COMPUTE_U
         if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Amplitude Estimation : ') ; lastTime = tic ; end
-        computeU ;
+        computeU() ;
         A ;
+    end
+
+% BUILD THE SIGNAl MODEL
+    if SIGNAL_MODEL
+        computeSignalModel() ;
     end
     
     
@@ -290,24 +309,36 @@ function OUT = ESPRIT(Signal,varargin)
     
 % OUTPUT
     if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Output : ') ; lastTime = tic ; end
+    % Input arguments
+        OUT.varargin = varargin ;
     % Results
         OUT.K = K ;
         OUT.dK = dK ;
+        OUT.V = V ;
         OUT.U = U ;
-        if isempty(DIMS_P)
-            OUT.SignalModel = reshape(SignalModel,Lk) ;
-        else
-            OUT.SignalModel = permute(reshape(SignalModel,[Lp Lk]),permDims) ;
+        if SIGNAL_MODEL
+            if isempty(DIMS_P)
+                OUT.SignalModel = reshape(SignalModel,Lk) ;
+            else
+                OUT.SignalModel = permute(reshape(SignalModel,[Lp Lk]),permDims) ;
+            end
         end
     % Sizes
         OUT.Lp = Lp ;
         OUT.Lk = Lk ;
         OUT.Kk = Kk ;
         OUT.Mk = Mk ;
+        OUT.isCOS = isCOS ;
+        OUT.isEXP = isEXP ;
+    % Decimation
+        OUT.DECIM_K = DECIM_K ;
+        OUT.DECIM_P = DECIM_P ;
     % HbH indices
+        OUT.subIndH = subIndH ;
         OUT.indHbH = indHbH ;
         OUT.indP = indP ;
     % Subspace
+        OUT.transpCss = transpCss ;
         OUT.Css = Css ;
         OUT.lambda = lambda ;
         OUT.W = W ;
@@ -327,29 +358,18 @@ function OUT = ESPRIT(Signal,varargin)
 
 % HANKEL MATRIX SIZES
     function setHankelSize()
-        indP = 1:size(Signal,1) ;
-        Kk = zeros([1 length(DIMS_K)]) ; % max size of (signal+noise) subspace
-        Mk = zeros([1 length(DIMS_K)]) ; % Spatial Smoothing subgrids
-        isCOS = false([1 length(DIMS_K)]) ; % IS COSINUS SEARCHED ?
-        for d = 1:length(DIMS_K)
-            switch lower(FUNC(d,:))
-                case 'exp'
-                    if isempty(K0) 
-                        Kk(d) = floor((Lk(d)+DECIM_K(d))./(1+DECIM_K(d))) ;
-                    else
-                        Kk(d) = K0(d) ;
-                    end
-                    Mk(d) = Lk(d) - DECIM_K(d).*(Kk(d)-1) ;
-                case 'cos'
-                    if isempty(K0) 
-                        Kk(d) = floor((Lk(d)+DECIM_K(d))/(2*DECIM_K(d)+1)) ;
-                    else
-                        Kk(d) = K0(d) ;
-                    end
-                    Mk(d) = Lk(d) - DECIM_K(d)*(2*Kk(d)-1) ;
-                    isCOS(d) = true ;
-            end
-        end
+        % Spatial smoothing ratio M/L
+            if numel(M_L)==1 ; M_L = M_L*ones(1,length(DIMS_K)) ; end
+            M_L = max(M_L,1./Lk) ; % avoids M=0
+            M_L = min(M_L,1-1./Lk) ; % avoids K=0
+            %M_L = max(M_L,1-M_L) ; % uses the symmetry to M=L/2 to minimize K
+        % Sub-grids size
+            Kk = floor((1-M_L).*Lk./DECIM_K + 1) ; zeros([1 length(DIMS_K)]) ; % max size of (signal+noise) subspace
+        % When Decimation, force the spatial smoothing to use all data
+            decimAndNoSS = Lk-(Kk-1).*DECIM_K<DECIM_K ;
+            Kk(decimAndNoSS) = Kk(decimAndNoSS)-1 ;
+        Mk = Lk - DECIM_K.*(Kk-1) ;
+        Kk(isCOS) = floor(Kk(isCOS)/2) ;
     end
 
 % SUB-HANKEL MATRICES INDICES
@@ -387,6 +407,7 @@ function OUT = ESPRIT(Signal,varargin)
 % HANKEL-BLOCK-HANKEL MATRIX INDICES
     function indicesHbH
         % Decimation in the isosurface points
+            indP = 1:size(Signal,1) ;
             if any(DECIM_P~=1)
                 indP = (1:DECIM_P(1):Lp(1))' ;
                 D = 1:length(DIMS_P) ;
@@ -420,8 +441,8 @@ function OUT = ESPRIT(Signal,varargin)
     end
 
 % BUILD THE CSS MATRIX
-    function Css = buildCss
-        % Build
+    function Css = buildCss()
+        % Build the covariance matrix
             if any(Kk~=Lk) % Mk~=1, spatial smoothing
                 % Sum the elementary Css matrices by points of isosurface
                     Css = zeros(prod(Kk),prod(Kk)) ;
@@ -441,7 +462,7 @@ function OUT = ESPRIT(Signal,varargin)
                 Css = SIG*SIG' ;
             end
         % Normalize
-            Css = Css/(prod(Mk)*length(indP)) ;
+            %Css = Css/(prod(Mk)*length(indP)) ;
     end
 
 
@@ -460,7 +481,7 @@ function OUT = ESPRIT(Signal,varargin)
                         Hss(1:prod(Kk),(1:prod(Mk))+(p-1)*prod(Mk)) = SIG ;
                     end
             else % Mk==1, no spatial smoothing (multiple snapshots case)
-                Hss = Data.' ;
+                Hss = Data(indP,:).' ;
             end
     end
 
@@ -510,7 +531,7 @@ function OUT = ESPRIT(Signal,varargin)
                 end
             % Build selection MATRICES
                 if nargout>3 % If Jup and Jdwn are needed
-                    I = eye(prod(Kk)) ;
+                    I = speye(prod(Kk)) ;
                     % Jup
                         Jup = I(indUp,:) ;
                     % Jdwn
@@ -543,8 +564,13 @@ function OUT = ESPRIT(Signal,varargin)
                 case 'LS'
                     F = Wup\Wdwn ;
                 case 'TLS'
-                    [E,~] = svd([Wup' ; Wdwn']*[Wup Wdwn],0) ;
-                    F = -E(1:R0(r),R0(r)+(1:R0(r)))/E(R0(r)+(1:R0(r)),R0(r)+(1:R0(r))) ;
+                    % Uncorrelated data
+                        kTLS = floor(size(Wp,1)/2) ;
+                        Wup = Wp(2*(0:kTLS-1)+1,:) ;
+                        Wdwn = Wp(2*(0:kTLS-1)+2,:) ;
+                    % TLS
+                        [E,~] = svd([Wup' ; Wdwn']*[Wup Wdwn],0) ;
+                        F = -E(1:R0(r),R0(r)+(1:R0(r)))/E(R0(r)+(1:R0(r)),R0(r)+(1:R0(r))) ;
             end
     end
 
@@ -600,7 +626,7 @@ function OUT = ESPRIT(Signal,varargin)
 
 
 % VANDERMONDE MATRIX
-    function V = buildVandermonde(L) % Here, decimation factors are no longer taken into account
+    function buildVandermonde(L) % Here, decimation factors are no longer taken into account
         % Indices
             indV = zeros(prod(L),length(L)) ;
             D = 1:length(DIMS_K) ;
@@ -619,7 +645,7 @@ function OUT = ESPRIT(Signal,varargin)
 % AMPLITUDES U RETRIEVAL
     function computeU % Here, decimation factors are no longer taken into account
         % Vandermonde Matrix
-            V = buildVandermonde(Lk) ;
+            buildVandermonde(Lk) ;
         % Shift for the conditionning
 %             v0 = max(abs(V),[],1) ;
 %             V = V*diag(1./v0) ;
@@ -627,12 +653,16 @@ function OUT = ESPRIT(Signal,varargin)
             S = Signal.' ;
         % Amplitude estimation
             A = V\S ;
-        % "Pure" signal reconstruction
-            SignalModel = (V*A).' ;
         % Vandermonde Shift compensation
 %             A = diag(1./v0)*A ;
         % Reshaping
             U = reshape(A.',[Lp , size(K,2)]) ;
+    end
+
+% SIGNAl MODEL CONSTRUCTION
+    function computeSignalModel()
+        if isempty(V) ; computeU() ; end
+        SignalModel = (V*A).' ;
     end
 
 
@@ -644,12 +674,13 @@ function OUT = ESPRIT(Signal,varargin)
         % Init
             dK = zeros(size(K)) ;
         % Signal perturbation
+            if isempty(SignalModel) ; computeSignalModel() ; end
             dS = Signal-SignalModel ;
         % Perturbation covariance
             if ~strcmp(lin_method,'none')
                 switch covar_estim
                     case 'uniform'
-                        var_dS = speye(prod(Lk)*length(indP))*var(dS(:),0) ;
+                        var_dS = var(dS(:),0);%*speye(prod(Lk)*length(indP)) ;
                     case 'diagonal'
                         var_dS = diag(var(dS,0,1)) ;
                     case 'full'
@@ -675,41 +706,58 @@ function OUT = ESPRIT(Signal,varargin)
                             M((1:prod(Kk)*length(indP))+(m-1)*(prod(Kk)*length(indP)),:) = Mm ;
                         end
                 case 'conv'
+                    % Jdelta matrix (decimation selection matrix)
+                        I = speye(prod((Kk-1).*DECIM_K+1)) ;
+                        Jdelta = I(indHbH{1}(:,1),:) ;
             end
-        % Partial Vandermonde matrices
-            V = buildVandermonde(Lk) ;
-            P = V(indHbH{1}(:,1),:) ;
-            Q = V(indHbH{1}(1,:),:) ;
-        % Complete right-Vandermonde Matrix
-            QA = zeros(prod(Mk)*length(indP),R0(R)) ;
-            for p = 1:length(indP) 
-                QA((1:prod(Mk))+(p-1)*prod(Mk),:) = Q*diag(A(:,indP(p))) ;
-            end
-        % Uncertainties 
+        % Pre-Computations
             shifts = eye(length(DIMS_K)) ; % /!\ SHIFTS IS DEFAULT HERE !
-            %x = (QA\eye(size(QA,1))).' ; 
-            x = (QA\eye(size(QA,1)))' ;
+            % Partial Vandermonde matrices
+                if isempty(V) ; buildVandermonde(Lk) ; end
+                P = V(indHbH{1}(:,1),:) ;
+                Q = V(indHbH{1}(1,:),:) ;
+            % Complete right-Vandermonde Matrix
+                QA = zeros(prod(Mk)*length(indP),R0(R)) ;
+                for p = 1:length(indP) 
+                    QA((1:prod(Mk))+(p-1)*prod(Mk),:) = Q*diag(A(:,indP(p))) ;
+                end
+            % Right vector of the bilinear form
+                if 0
+                    x = (QA\eye(size(QA,1)))' ;
+                else
+                    if isempty(Hss) ; Hss = buildHss(SignalModel) ; end
+                    x = conj(bsxfun(@(x,c)x./c,Hss'*W(:,1:R0(R)),lambda(1:R0(R)).')*T) ;
+                end
+        % Loop over the shifts
             for s = 1:size(K,1)
                 [~,~,~,Jup,Jdwn] = selectMatrices(shifts(s,:)) ;
-                vn = (Jup*P)\eye(size(Jdwn,1)) ;
-                for r = 1:size(K,2)
-                    arn = V(2,r) ;
-                    %vrn = vn(r,:)*(Jdwn-arn*Jup) ;
-                    arn = P(2,r) ;
-                    vrn = (vn(r,:)*(Jdwn-arn*Jup))' ;
-                    switch lin_method
-                        case 'none' % UNCERTAINTY (DOES NOT WORK WELL...)
-                            dK(s,r) = abs(vrn'*dH*x(:,r)/arn/prod(DECIM_K))^2 ;
-                        case 'conv' % LINEAR / BY CONVOLUTION (USE OF THE HANKEL SHAPE OF Hss)
-                            VRN = reshape(vrn,[1 Kk]) ;
-                            XR = reshape(x(:,r),[length(indP) Mk]) ;
-                            ZN = convn(VRN,XR) ;
-                            zn = ZN(:) ;
-                        case 'kron' % LINEAR / BY VECTORIZATION (USES vec(A*X*B) = kron(B.',A)*vec(X) ) 
-                            zn = (kron((x(:,r)),vrn)'*M).' ;
+                % pre-compute
+                    if 0
+                        vn = (Jup*P)\speye(size(Jdwn,1)) ;
+                    else
+                        vn = T\((Jup*W(:,1:R0(R)))\speye(size(Jdwn,1))) ;
                     end
-                    dK(s,r) = zn'*var_dS*zn/prod(DECIM_K)^2 ;
-                end
+                % Loop over the R0(R) components
+                    for r = 1:size(K,2)
+                        % The pole
+                            arn = P(2,r) ;
+                        % Left vector of the bilinear form
+                            vrn = (vn(r,:)*(Jdwn-arn*Jup)*Jdelta)' ;
+                        % Linearization method
+                            switch lin_method
+                                case 'none' % UNCERTAINTY (DOES NOT WORK WELL...)
+                                    dK(s,r) = abs(vrn'*dH*x(:,r)/arn/prod(DECIM_K))^2 ;
+                                case 'conv' % LINEAR / BY CONVOLUTION (USE OF THE HANKEL SHAPE OF Hss)
+                                    VRN = reshape(vrn,[1 (Kk-1).*DECIM_K+1]) ;
+                                    XR = reshape(x(:,r),[length(indP) Mk]) ;
+                                    ZN = convn(VRN,XR) ;
+                                    zn = ZN(:) ;
+                                case 'kron' % LINEAR / BY VECTORIZATION (USES vec(A*X*B) = kron(B.',A)*vec(X) ) 
+                                    zn = (kron((x(:,r)),vrn)'*M).' ;
+                            end
+                        % Save
+                            dK(s,r) = zn'*var_dS*zn/prod(DECIM_K)^2 ;
+                    end
             end
     end
 
@@ -741,6 +789,7 @@ function OUT = ESPRIT(Signal,varargin)
                 for i = 1:2:length(varargin)-1
                     Name = varargin{i} ;
                     Value = varargin{i+1} ;
+                    if isempty(Value) ; continue ; end
                     switch upper(Name)
                         case 'DIMS_K'
                             DIMS_K = Value ;
@@ -784,8 +833,8 @@ function OUT = ESPRIT(Signal,varargin)
                         case 'SOLVER'
                             SOLVER = Value ;
                             paramSet(13) = true ;
-                        case 'K0'
-                            K0 = Value ;
+                        case 'M/L'
+                            M_L = Value ;
                             paramSet(15) = true ;
                         case 'W0'
                             W0 = Value ;
@@ -793,6 +842,9 @@ function OUT = ESPRIT(Signal,varargin)
                         case 'COMPUTE_DK'
                             COMPUTE_dK = Value ;
                             paramSet(17) = true ;
+                        case 'SIGNAL_MODEL'
+                            SIGNAL_MODEL = Value ;
+                            paramSet(18) = true ;
                         otherwise
                             %errorInput(['Wrong argument name in n°',num2str(i),'.'])
                             errorInput([Name,' (n°',num2str(i),').'])
@@ -814,9 +866,10 @@ function OUT = ESPRIT(Signal,varargin)
             if ~paramSet(12) ; CRITERION = 'MDL' ; end
             if ~paramSet(13) ; SOLVER = 'eig' ; end
             if ~paramSet(14) ; COMPUTE_U = false ; end
-            if ~paramSet(15) ; K0 = [] ; end
+            if ~paramSet(15) ; M_L = 2/3 ; end
             if ~paramSet(16) ; W0 = [] ; end
             if ~paramSet(17) ; COMPUTE_dK = false ; end
+            if ~paramSet(18) ; SIGNAL_MODEL = false ; end
     end
 
 
@@ -881,20 +934,22 @@ function OUT = ESPRIT(Signal,varargin)
             stab.fig = figure('NumberTitle','off','Name','ESPRIT : STABILIZATION DIAGRAM. Click to select an other signal order. Right Click to quit.') ; %figure ;
             % Axes for the signal order selection Criterions
                 stab.axCrit = axes('outerposition',[0 0 .2 1]) ;
-                    stab.plOrderLine = plot(stab.axCrit,R0(R)*[1 1],[min(log10(ESTER(:))) max(log10(ESTER(:)))],'-.k','linewidth',1) ;
-                    stab.plRLine = plot(stab.axCrit,R0(R)*[1 1],[min(log10(ESTER(:))) max(log10(ESTER(:)))],'-.r','linewidth',1) ;
                     plot(R0,log10(CRIT),'.-','markersize',20,'linewidth',1) ;
                     set(gca,'view',[-90 90]) ;
                     box on
                     grid on
                     axis tight
+                    stab.axCrit.XLim = [min(R0) max(R0)] ;
+                    % Cursors
+                        stab.plOrderLine = plot(stab.axCrit,R0(R)*[1 1],stab.axCrit.YLim,'-.k','linewidth',1) ;
+                        stab.plRLine = plot(stab.axCrit,R0(R)*[1 1],stab.axCrit.YLim,'-.r','linewidth',1) ;
                     % Disable rotate3d
                         hBehavior = hggetbehavior(stab.axCrit, 'Rotate3d');
                         hBehavior.Enable = false ;
             % Axes for the Poles
                 stab.axPoles = axes('outerposition',[.2 0 .8 1]) ;
                     if MAC ; plot3(abs(real(K_MAClinks')),OR_MAClinks',abs(imag(K_MAClinks')./real(K_MAClinks')),'-k','linewidth',.5) ; end
-                    plot3(abs(real(Kstab)),repmat(R0(:),[1 max(R0)]),abs(imag(Kstab)./real(Kstab)),'.','markersize',13,'linewidth',1.5)
+                    plot3(abs(real(Kstab)),repmat(R0(:),[1 max(R0)]),abs(imag(Kstab)./real(Kstab)),'+','markersize',10,'linewidth',.5)
                     stab.axPoles.ZScale = 'log' ;
                     stab.axPoles.SortMethod = 'childorder' ;
                 stab.axMean = axes('position',stab.axPoles.Position) ;
@@ -911,14 +966,14 @@ function OUT = ESPRIT(Signal,varargin)
                     %set([stab.axMean stab.axPoles],'xlim',[1/prod(Lk)*2*pi/2 pi]) ;
                     w = abs(real(Kstab(:))) ;
                     set([stab.axMean stab.axPoles],'xlim',[min(w(w~=0)) max(w)].*[0.9 1.1]) ;
-                set([stab.axPoles],'ylim',[R0(1) R0(end)]) ;
+                set([stab.axPoles],'ylim',[min(R0) max(R0)]) ;
                 global hlink , hlink = linkprop([stab.axMean stab.axPoles],'position') ;
                 linkaxes([stab.axMean stab.axPoles],'x') ;
                 uistack(stab.axMean,'bottom') ;
             % Poles Chosen at the end
-                stab.plRPoles = plot3(stab.axPoles,abs(real(Kstab(R,:))),R0(R)*ones(1,max(R0)),abs(imag(Kstab(R,:))./real(Kstab(R,:))),'or','linewidth',1.5) ;
+                stab.plRPoles = plot3(stab.axPoles,abs(real(Kstab(R,:))),R0(R)*ones(1,max(R0)),abs(imag(Kstab(R,:))./real(Kstab(R,:))),'or','markersize',15,'linewidth',1.5) ;
             % Poles at the mouse position
-                stab.plOrderPoles = plot3(stab.axPoles,abs(real(Kstab(R,:))),R0(R)*ones(1,max(R0)),abs(imag(Kstab(R,:))./real(Kstab(R,:))),'.k','markersize',20) ;
+                stab.plOrderPoles = plot3(stab.axPoles,abs(real(Kstab(R,:))),R0(R)*ones(1,max(R0)),abs(imag(Kstab(R,:))./real(Kstab(R,:))),'.k','markersize',30) ;
             % Figure Callbacks setting
                 stab.fig.WindowButtonMotionFcn = @(src,evt)changeStabDiagOrder(Kstab,stab,'move') ;
                 stab.fig.WindowButtonDownFcn = @(src,evt)changeStabDiagOrder(Kstab,stab,'click') ;
@@ -934,6 +989,7 @@ function OUT = ESPRIT(Signal,varargin)
                 stab.btnSwitch.Callback = @(src,evt)btnSwitchCallback(stab) ;
             % Wait for the figure to be closed
                 uiwait(stab.fig) ;
+                drawnow ;
     end
 
 % CHANGE THE STABILIZATION DIAGRAM ORDER WITH MOUSE POSITION
