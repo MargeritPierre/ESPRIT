@@ -163,6 +163,7 @@ function OUT = ESPRIT(Signal,varargin)
         U = zeros([max(R0) length(DIMS_P)+1]) ; % Amplitudes
         if any(isCOS) ; PHI = [] ; end % Phases of the cosinuses
         SignalModel = [] ; % Reconstructed Signal Model
+        dS = [] ; % Errors
         Hss = [] ;
         
         
@@ -257,8 +258,8 @@ function OUT = ESPRIT(Signal,varargin)
                             end
                         end
                     % Compute the mean over shifts
-                        %CRIT = prod(ESTER,1) ;
-                        CRIT = max(ESTER,[],1) ;
+                        CRIT = prod(ESTER,1) ;
+                        %CRIT = max(ESTER,[],1) ;
                         %CRIT = mean(ESTER,1) ;
                     % Save the criterion
                         OUT.ESTER = ESTER ;
@@ -321,9 +322,12 @@ function OUT = ESPRIT(Signal,varargin)
         if ~isempty(SignalModel)
             if isempty(DIMS_P)
                 OUT.SignalModel = reshape(SignalModel,Lk) ;
+                OUT.dS = reshape(dS,Lk) ;
             else
                 OUT.SignalModel = permute(reshape(SignalModel,[Lp Lk]),permDims) ;
+                OUT.dS = permute(reshape(dS,[Lp Lk]),permDims) ;
             end
+            OUT.RelativeError = norm(dS(:))/norm(Signal(:)) ;
         end
     % Sizes
         OUT.Lp = Lp ;
@@ -457,7 +461,7 @@ function OUT = ESPRIT(Signal,varargin)
                         end
                         SIG = SIG/n_indHbH ;
                         Css = Css + SIG*SIG' ;
-                        if p==1 && DEBUG ; disp(['       estim: ',num2str(toc(t)*length(indP)),' secs']) ; end
+                        if length(indP)>1 && p==1 && DEBUG ; disp(['       estim: ',num2str(toc(t)*length(indP)),' secs']) ; end
                     end
             else % Mk==1, no spatial smoothing (multiple snapshots case)
                 SIG = Signal.' ;
@@ -635,17 +639,16 @@ function OUT = ESPRIT(Signal,varargin)
             for d = 1:length(D)
                 indV(:,d) = kron(repmat((1:L(d))',[prod(L(D>d)) 1]),ones([prod(L(D<d)) 1])) - 1 ;
             end
-        % Poles
+        % Wavevectors
             if ~any(isCOS) % No cosinuses, normal Vandermonde matrix
-                Z = exp(1i.*K) ;
-            else
-                Kminus = bsxfun(@times,double(~isCOS),K)-bsxfun(@times,double(isCOS),K) ;
-                Z = [exp(1i.*K) exp(1i*Kminus)] ;
+                Kt = K ;
+            else % Cosinuses searched, extended Vnadermonde matrix
+                Kt = [K bsxfun(@times,double(~isCOS(:)),K)-bsxfun(@times,double(isCOS(:)),K)] ;
             end
-            Z = repmat(reshape(Z,[1 size(Z)]),[prod(L) 1]) ;
         % Vandermonde
-            indV = repmat(indV,[1 1 size(Z,3)]) ;
-            V = reshape(prod(Z.^indV,2),[prod(L) size(Z,3)]) ;
+            Kt = permute(Kt,[3 2 1]) ;
+            indV = permute(indV,[1 3 2]) ;
+            V = exp(1i*sum(bsxfun(@times,indV,Kt),3)) ;
     end
 
 
@@ -654,14 +657,14 @@ function OUT = ESPRIT(Signal,varargin)
         % Vandermonde Matrix
             if isempty(V) ; buildVandermonde(Lk) ; end
         % Shift for the conditionning
-%             v0 = max(abs(V),[],1) ;
-%             V = V*diag(1./v0) ;
+            v0 = max(abs(V),[],1) ;
+            V = V*diag(1./v0) ;
         % Signal reshaping
             S = Signal.' ;
         % Amplitude estimation
             A = V\S ;
         % Vandermonde Shift compensation
-%             A = diag(1./v0)*A ;
+            A = diag(1./v0)*A ;
         % Reshaping
             if ~any(isCOS) % No cosinuses, no phases to estimate
                 U = reshape(A.',[Lp , size(K,2)]) ;
@@ -677,6 +680,7 @@ function OUT = ESPRIT(Signal,varargin)
     function computeSignalModel()
         if isempty(V) ; computeU() ; end
         SignalModel = (V*A).' ;
+        dS = Signal-SignalModel ;
     end
 
 
@@ -687,8 +691,8 @@ function OUT = ESPRIT(Signal,varargin)
                             ... 'kron'...
                             ... 'none'...  
                         ;
-            covar_estim =    'uniform' ... % Estimation of the perturbation covariance: 
-                            ... 'diagonal' ...
+            covar_estim =   ... 'uniform' ... % Estimation of the perturbation covariance: 
+                             'diagonal' ...
                             ... 'full' ...
                             ;
             formulation =   ... 'analytic' ... % with Vandermonde matrices etc. Do not work with cosinuses
@@ -698,18 +702,13 @@ function OUT = ESPRIT(Signal,varargin)
             dK = zeros(size(K)) ;
         % Signal perturbation
             if isempty(SignalModel) ; computeSignalModel() ; end
-            dS = Signal-SignalModel ;
         % Perturbation covariance
             if ~strcmp(lin_method,'none') % Variance estimation: var(K)
                 switch covar_estim
                     case 'uniform'
                         var_dS = var(dS(:),0);
                     case 'diagonal'
-                        if length(indP)==1 
-                            var_dS = diag(abs(dS).^2) ;
-                        else
-                            var_dS = diag(var(dS,0,1)) ;
-                        end
+                        var_dS = diag(abs(dS(:)).^2) ;
                     case 'full'
                         dSzm = (dS-repmat(mean(dS,1),[size(dS,1) 1])).' ;
                         var_dS = dSzm*dSzm'/size(dSzm,2) ;
@@ -789,7 +788,7 @@ function OUT = ESPRIT(Signal,varargin)
                                     vrn = (vn(r,:)*(Jdwn-PIrn*Jup)*Jdelta)' ;
                                     VRN = full(reshape(vrn,[1 Lk-Mk+1])) ;
                                     XR = reshape(x(:,r),[length(indP) Mk]) ;
-                                    ZN = convn(VRN,XR) ;
+                                    ZN = ifftn(bsxfun(@times,fftn(VRN,[1 Lk]),fftn(XR,[length(indP) Lk]))) ; % ND convolution
                                     zn = ZN(:) ;
                                     dK(s,r) = zn'*var_dS*zn ;
                                 case 'kron' % LINEAR / BY VECTORIZATION (USES vec(A*X*B) = kron(B.',A)*vec(X) ) 
@@ -798,7 +797,7 @@ function OUT = ESPRIT(Signal,varargin)
                                     dK(s,r) = zn'*var_dS*zn ;
                             end
                         % Common terms
-                            dK(s,r) = sqrt(real(dK(s,r)/DECIM_K(s)^2/abs(Arn)^2)) ;
+                            dK(s,r) = sqrt(dK(s,r)/DECIM_K(s)^2/abs(Arn)^2) ;
                     end
             end
     end

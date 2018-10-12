@@ -7,7 +7,7 @@ clear all
 
 
 Ns = 100 ; % Number of Samples
-F = 0.01;%+0.1i ; (linspace(-1,1,1)*.04 + .03)*pi*(1-.10i) ; %rand(1,8)*0.49*pi ; %[.05 -.1 .3 -.02]*pi%] ; % Tones (normalized freq.)];%]%
+F = 0.1;%+0.1i ; (linspace(-1,1,1)*.04 + .03)*pi*(1-.10i) ; %rand(1,8)*0.49*pi ; %[.05 -.1 .3 -.02]*pi%] ; % Tones (normalized freq.)];%]%
 U = [1] ; % Amplitudes
 SNR = logspace(-2,4,10) ;
 FUNC = 'exp' ;
@@ -100,13 +100,14 @@ grid on
 clc
 clear all
 %close all
+clf ;
 
 
 Ns = round(logspace(log10(10),log10(100),20)) ; % Number of Samples
-F = [.03]*pi ; % Tones (normalized freq.)
+F = [.3]*pi ; % Tones (normalized freq.)
 U = [1] ; % Amplitudes
-FUNC = 'cos' ;
-SNR = 1e6 ;
+FUNC = 'exp' ;
+SNR = 1e2 ;
 nMCMC = 100 ;
 profiler = false ;
 
@@ -121,7 +122,7 @@ EspArgs = {... Arguments for ESPRIT
            'FIT' , 'LS' ; ...
            'SOLVER' , 'eig' ; ...
            'DEBUG' , false ; ...
-           'M/L' , [1/2] ; ...
+           'M/L' , [] ; ...
            'COMPUTE_dK', true ;...
           }' ;
 
@@ -172,7 +173,6 @@ minSE = min(SE,[],3) ; ... meandK - std(dK,0,3) ;
 maxSE = max(SE,[],3) ; ... meandK + std(dK,0,3) ;
 
 
-clf ;
 plot(Ns,mindK,':k') ;
 plot(Ns,meandK,'.-k','markersize',20) ;
 plot(Ns,maxdK,':k') ;
@@ -190,12 +190,14 @@ clc
 clear all
 %close all
 
+clf ;
+
 
 Ns = 100 ; % Number of Samples
 F = logspace(log10(0.000001),log10(Ns/2.01),10)*pi/Ns;%*(1+.05i) ; % Tones (normalized freq.)
 U = [100] ; % Amplitudes
-FUNC = 'cos' ;
-SNR = 1e2 ;
+FUNC = 'exp' ;
+SNR = 1e4 ;
 nMCMC = 100 ;
 profiler = false ;
 
@@ -210,7 +212,7 @@ EspArgs = {... Arguments for ESPRIT
            'FIT' , 'LS' ; ...
            'SOLVER' , 'eig' ; ...
            'DEBUG' , false ; ...
-           'K0' , [] ; ...
+           'M/L' , [] ; ...
            'COMPUTE_dK', true ;...
           }' ;
 
@@ -262,8 +264,6 @@ tMSE = (mean(SE,2)) ;
 minSE = min(SE,[],2) ; ... meandK - std(dK,0,3) ;
 maxSE = max(SE,[],2) ; ... meandK + std(dK,0,3) ;
 
-
-clf ;
 plot(F/pi,mindK,':k') ;
 plot(F/pi,meandK,'.-k','markersize',20) ;
 plot(F/pi,maxdK,':k') ;
@@ -453,6 +453,7 @@ clear all
 %close all
 
 
+clf ;
 Ns = 100 ; % Number of Samples
 F = 0.001-0.1i % [-.23-.1i*0]*pi ; % Tones (normalized freq.)
 U = [1] ; % Amplitudes
@@ -495,7 +496,7 @@ for k = 1:nM_L
         noise = noise*norm(Signal)/norm(noise)/SNR ;
         out = ESPRIT(Signal+noise,ARGS{:}) ;
         K(k,:,m) = out.K ;
-        dK(k,:,m) = out.dK ;
+        dK(k,:,m) = out.dK^2 ;
         M_L_exp(k) = out.Mk./out.Lk ;
         if toc(ti)>.2
             ti = tic ;
