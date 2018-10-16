@@ -10,7 +10,7 @@ function OUT = ESPRIT(Signal,varargin)
 %       SOLVER : signal subspace estimation
 %           string : 'eigs' or 'eig' ('eig') 
 %       CRITERION : signal order choice criterion
-%           string : 'ESTER' or 'MDL' ('MDL')
+%           string : 'ESTER', 'SAMOS', 'MDL' or 'ALL' ('MDL')
 %       CRIT_THRS : signal order criterion threshold 
 %           1x1 double (1)
 %       COMPUTE_U : compute amplitudes 
@@ -50,6 +50,16 @@ function OUT = ESPRIT(Signal,varargin)
 %           1x1 double : (0)
 %           - MAC == 0 : no MAC value computed
 %           - 0 < MAC < 1 : poles with corr > MAC are linked
+%       STOP : partial execution of the algorithm
+%           string ('None') : 
+%           - 'Hankel'
+%           - 'Covariance'
+%           - 'Subspace'
+%           - 'Order'
+%           - 'Wavevectors'
+%           - 'Amplitudes'
+%           - 'None'
+%
 %
 %   OUT structure : 
 %    % Sizes
@@ -247,32 +257,38 @@ function OUT = ESPRIT(Signal,varargin)
     if length(R0)==1 % THE SIGNAL ORDER HAS BEEN GIVEN
         R = 1 ;
     else % SIGNAL ORDER CHOICE
-        % COMPUTE THE CRITERION
-            switch CRITERION
-                case 'ESTER'
-                    % Compute all errors
-                        ESTER = zeros(size(SHIFTS,1),length(R0)) ;
-                        for r = 1:length(R0)
-                            for s = 1:size(SHIFTS,1)
-                                ESTER(s,r) = ester(r,s) ;
-                            end
+        % INITIALIZATION
+            ESTER = NaN*ones(size(SHIFTS,1),length(R0)) ;
+            SAMOS = NaN*ones(size(SHIFTS,1),length(R0)) ;
+        % MDL
+            MDL = (lambda(1:end-1)-lambda(2:end))./lambda(1:end-1) ;
+            MDL = [MDL ; 0] ;
+            MDL = MDL(R0) ;
+            MDL = MDL(:)' ;
+            CRIT = MDL ;
+        % OTHER CRITERIONS
+            % ESTER
+                if strcmp(CRITERION,'ALL') || strcmp(CRITERION,'ESTER')
+                    if(DEBUG) ; display('        ester') ; end
+                    for r = 1:length(R0)
+                        for s = 1:size(SHIFTS,1)
+                            ESTER(s,r) = ester(r,s) ;
                         end
-                    % Compute the mean over shifts
-                        CRIT = prod(ESTER,1) ;
-                        %CRIT = max(ESTER,[],1) ;
-                        %CRIT = mean(ESTER,1) ;
-                    % Save the criterion
-                        OUT.ESTER = ESTER ;
-                case 'MDL'
-                    MDL = (lambda(1:end-1)-lambda(2:end))./lambda(1:end-1) ;
-                    CRIT = [MDL ; 0] ;
-                    CRIT = CRIT(R0) ;
-                    % Save the criterion
-                        OUT.MDL = MDL ;
-            end
-            % CHOOSE THE SIGNAL ORDER
-                R = find(CRIT>=max(CRIT)*CRIT_THRS,1,'last') ;
-                OUT.CRIT = CRIT ;
+                    end
+                end
+            % SAMOS
+                if strcmp(CRITERION,'ALL') || strcmp(CRITERION,'SAMOS')
+                    if(DEBUG) ; display('        samos') ; end
+                    for r = 1:length(R0)
+                        for s = 1:size(SHIFTS,1)
+                            SAMOS(s,r) = samos(r,s) ;
+                        end
+                    end
+                end
+        % CHOOSE THE SIGNAL ORDER
+            CRIT = prod(CRIT,1) ;
+            R = find(CRIT>=max(CRIT)*CRIT_THRS,1,'last') ;
+            OUT.CRIT = CRIT ;
     end
     
         
@@ -348,6 +364,13 @@ function OUT = ESPRIT(Signal,varargin)
         OUT.Css = Css ;
         OUT.lambda = lambda ;
         OUT.W = W ;
+    % Signal Order
+        if length(R0)>1
+            OUT.CRIT = CRIT ;
+            OUT.MDL = MDL ;
+            OUT.ESTER = ESTER ;
+            OUT.SAMOS = SAMOS ;
+        end
     
 
 % END OF THE PROCEDURE
@@ -450,19 +473,31 @@ function OUT = ESPRIT(Signal,varargin)
     function Css = buildCss()
         % Build the covariance matrix
             if any(Kk~=Lk) % Mk~=1, spatial smoothing
-                % Sum the elementary Css matrices by points of isosurface
-                    Css = zeros(prod(Kk),prod(Kk)) ;
-                    t = tic ; 
-                    for p = 1:length(indP)
-                        sig = Signal(indP(p),:) ;
-                        SIG = sig(indHbH{1}) ;
+                if 0 %length(Kk)==1 && sum(isCOS)==0 % 1D exp case, convolution
+                    % Signal vector
+                        sig = Signal(indP,indHbH{1}(:)) ;
                         for i = 2:n_indHbH
-                            SIG = SIG + sig(indHbH{i}) ;
+                            sig = sig + Signal(indP,indHbH{i}(:)) ;
                         end
-                        SIG = SIG/n_indHbH ;
-                        Css = Css + SIG*SIG' ;
-                        if length(indP)>1 && p==1 && DEBUG ; disp(['       estim: ',num2str(toc(t)*length(indP)),' secs']) ; end
-                    end
+                        sig = sig/n_indHbH ;
+                        sig = sig.' ; % now size(sig)=[Kk*Mk length(indP)]
+                    % Signal Matrix
+                        SIG = reshape(sig,[Kk Mk length(indP)]) ;
+                else % N-D Case
+                    % Sum the elementary Css matrices by points of isosurface
+                        Css = zeros(prod(Kk),prod(Kk)) ;
+                        t = tic ; 
+                        for p = 1:length(indP)
+                            sig = Signal(indP(p),:) ;
+                            SIG = sig(indHbH{1}) ;
+                            for i = 2:n_indHbH
+                                SIG = SIG + sig(indHbH{i}) ;
+                            end
+                            SIG = SIG/n_indHbH ;
+                            Css = Css + SIG*SIG' ;
+                            if length(indP)>1 && p==1 && DEBUG ; disp(['       estim: ',num2str(toc(t)*length(indP)),' secs']) ; end
+                        end
+                end
             else % Mk==1, no spatial smoothing (multiple snapshots case)
                 SIG = Signal.' ;
                 Css = SIG*SIG' ;
@@ -551,7 +586,7 @@ function OUT = ESPRIT(Signal,varargin)
         
         
 % MATRICES F (SHIFT INVARIANCE EVAL.)
-    function [F,Wup,Wdwn] = computeF(r,s)
+    function [Wup,Wdwn,F] = computeF(r,s)
         % Get indices
             shift = SHIFTS(s,:) ;
             [indUp,indDwn1,indDwn2] = selectMatrices(shift) ;
@@ -565,26 +600,34 @@ function OUT = ESPRIT(Signal,varargin)
                 Wup = Wp(indUp,:) ;
                 Wdwn = Wp(indDwn1,:) ;
             end
+        % Only the Wup and Wdwn matrices needed ?
+            if nargout==2 ; return ; end
         % Shift invariance evaluation
             switch FIT
                 case 'LS'
                     F = Wup\Wdwn ;
                 case 'TLS'
-                    % Uncorrelated data
-                        %kTLS = floor(size(Wp,1)/2) ;
-                        %Wup = Wp(2*(0:kTLS-1)+1,:) ;
-                        %Wdwn = Wp(2*(0:kTLS-1)+2,:) ;
-                    % TLS
-                        [E,~] = svd([Wup' ; Wdwn']*[Wup Wdwn],0) ;
-                        F = -E(1:R0(r),R0(r)+(1:R0(r)))/E(R0(r)+(1:R0(r)),R0(r)+(1:R0(r))) ;
+                    [E,~] = svd([Wup' ; Wdwn']*[Wup Wdwn],0) ;
+                    F = -E(1:R0(r),R0(r)+(1:R0(r)))/E(R0(r)+(1:R0(r)),R0(r)+(1:R0(r))) ;
             end
     end
 
 
 % ESTER CRITERION
     function err = ester(r,s)
-        [F,Wup,Wdwn] = computeF(r,s) ;
+        [Wup,Wdwn,F] = computeF(r,s) ;
         err = 1/norm(Wup*F-Wdwn) ;
+    end
+
+
+% SAMOS CRITERION
+    function err = samos(r,s)
+        [Wup,Wdwn] = computeF(r,s) ;
+        S = [Wup Wdwn] ;
+        g = sort(sqrt(eig(S'*S,'vector'))) ;
+        %g = flip(svd(S)) ;
+        E = sum(g(1:R0(r)))/R0(r) ;
+        err = 1/E ;
     end
 
 
@@ -593,7 +636,7 @@ function OUT = ESPRIT(Signal,varargin)
         % Evaluation of all shift invariances
             F = zeros(R0(r),R0(r),size(SHIFTS,1)) ;
             for s = 1:size(SHIFTS,1)
-                F(:,:,s) = computeF(r,s) ;
+                [~,~,F(:,:,s)] = computeF(r,s) ;
             end
         % Evaluation of PHI
             if size(SHIFTS,1)==1 % One shift, simple diagonalization
@@ -990,14 +1033,18 @@ function OUT = ESPRIT(Signal,varargin)
             K = Kstab(R,1:R) ;
         % Figure
             stab.fig = figure('NumberTitle','off','Name','ESPRIT : STABILIZATION DIAGRAM. Click to select an other signal order. Right Click to quit.') ; %figure ;
-            % Axes for the signal order selection Criterions
+            % Axes for the signal order selection Criterion(s)
                 stab.axCrit = axes('outerposition',[0 0 .2 1]) ;
-                    plot(R0,log10(CRIT),'.-','markersize',20,'linewidth',1) ;
-                    set(gca,'view',[-90 90]) ;
-                    box on
-                    grid on
-                    axis tight
-                    stab.axCrit.XLim = [min(R0) max(R0)] ;
+                    % Plot ALL Criterions
+                        plot(R0,log10(CRIT),'.-','markersize',20,'linewidth',1) ;
+                        plot(R0,log10(ESTER),'.-','markersize',20,'linewidth',1) ;
+                        plot(R0,log10(SAMOS),'.-','markersize',20,'linewidth',1) ;
+                    % Format the axes
+                        set(gca,'view',[-90 90]) ;
+                        box on
+                        grid on
+                        axis tight
+                        stab.axCrit.XLim = [min(R0) max(R0)] ;
                     % Cursors
                         stab.plOrderLine = plot(stab.axCrit,R0(R)*[1 1],stab.axCrit.YLim,'-.k','linewidth',1) ;
                         stab.plRLine = plot(stab.axCrit,R0(R)*[1 1],stab.axCrit.YLim,'-.r','linewidth',1) ;
