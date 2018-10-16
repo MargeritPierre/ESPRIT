@@ -657,14 +657,14 @@ function OUT = ESPRIT(Signal,varargin)
         % Vandermonde Matrix
             if isempty(V) ; buildVandermonde(Lk) ; end
         % Shift for the conditionning
-            v0 = max(abs(V),[],1) ;
-            V = V*diag(1./v0) ;
+            %v0 = max(abs(V),[],1) ;
+            %V = V*diag(1./v0) ;
         % Signal reshaping
             S = Signal.' ;
         % Amplitude estimation
             A = V\S ;
         % Vandermonde Shift compensation
-            A = diag(1./v0)*A ;
+            %A = diag(1./v0)*A ;
         % Reshaping
             if ~any(isCOS) % No cosinuses, no phases to estimate
                 U = reshape(A.',[Lp , size(K,2)]) ;
@@ -687,6 +687,9 @@ function OUT = ESPRIT(Signal,varargin)
 % UNCERTAINTY ESTIMATION dK
     function computeUncertainties
         % Options (hard-coded for now)
+            estimate =   'stdK' ...
+                        ... 'dK' ...
+                        ;
             lin_method =     'conv' ... % Linearization method for the variance:
                             ... 'kron'...
                             ... 'none'...  
@@ -703,15 +706,15 @@ function OUT = ESPRIT(Signal,varargin)
         % Signal perturbation
             if isempty(SignalModel) ; computeSignalModel() ; end
         % Perturbation covariance
-            if ~strcmp(lin_method,'none') % Variance estimation: var(K)
+            if ~strcmp(lin_method,'none') && strcmp(estimate,'stdK') % Variance estimation: std(K)
                 switch covar_estim
                     case 'uniform'
-                        var_dS = var(dS(:),0);
+                        var_dS = var(dS(:),0); % scalar
                     case 'diagonal'
-                        var_dS = diag(abs(dS(:)).^2) ;
+                        var_dS = abs(dS(:)).^2 ; % vector
                     case 'full'
                         dSzm = (dS-repmat(mean(dS,1),[size(dS,1) 1])).' ;
-                        var_dS = dSzm*dSzm'/size(dSzm,2) ;
+                        var_dS = dSzm*dSzm'/size(dSzm,2) ; % matrix
                 end
             else % punctual uncertainty estimation: dK
                 dH = buildHss(dS) ;
@@ -781,23 +784,37 @@ function OUT = ESPRIT(Signal,varargin)
                             end
                         % Linearization method
                             switch lin_method
-                                case 'none' % UNCERTAINTY (DOES NOT WORK WELL...)
+                                case 'none' % NO LINEARIZATION, uncertainty only
                                     vrn = (vn(r,:)*(Jdwn-PIrn*Jup))' ;
-                                    dK(s,r) = abs(vrn'*dH*x(:,r))^2 ;
+                                    dK(s,r) = abs(vrn.'*dH*x(:,r)) ;
                                 case 'conv' % LINEAR / BY CONVOLUTION (USE OF THE HANKEL SHAPE OF Hss)
                                     vrn = (vn(r,:)*(Jdwn-PIrn*Jup)*Jdelta)' ;
                                     VRN = full(reshape(vrn,[1 Lk-Mk+1])) ;
                                     XR = reshape(x(:,r),[length(indP) Mk]) ;
-                                    ZN = ifftn(bsxfun(@times,fftn(VRN,[1 Lk]),fftn(XR,[length(indP) Lk]))) ; % ND convolution
-                                    zn = ZN(:) ;
-                                    dK(s,r) = zn'*var_dS*zn ;
+                                    ZN = ifftn(bsxfun(@times,fftn(VRN,[1 Lk]),fftn(XR,[prod(Lp) Lk]))) ; % ND convolution
+                                    zn = conj(ZN(:)) ;
                                 case 'kron' % LINEAR / BY VECTORIZATION (USES vec(A*X*B) = kron(B.',A)*vec(X) ) 
                                     vrn = (vn(r,:)*(Jdwn-PIrn*Jup))' ;
                                     zn = (kron((x(:,r)),vrn)'*M).' ;
-                                    dK(s,r) = zn'*var_dS*zn ;
+                            end
+                        % Perturbation estimate
+                            if ~strcmp(lin_method,'none')
+                                switch estimate
+                                    case 'stdK'
+                                        switch covar_estim
+                                            case 'uniform'
+                                                dK(s,r) = sqrt(var_dS*sum(abs(zn).^2)) ;
+                                            case 'diagonal'
+                                                dK(s,r) = sqrt(sum(abs(zn).^2.*var_dS)) ;
+                                            case 'full'
+                                                dK(s,r) = sqrt(zn'*var_dS*zn) ;
+                                        end
+                                    case 'dK'
+                                        dK(s,r) = abs(zn'*dS(:)) ;
+                                end
                             end
                         % Common terms
-                            dK(s,r) = sqrt(dK(s,r)/DECIM_K(s)^2/abs(Arn)^2) ;
+                            dK(s,r) = dK(s,r)/DECIM_K(s)/abs(Arn)  ;
                     end
             end
     end
@@ -946,7 +963,7 @@ function OUT = ESPRIT(Signal,varargin)
                     wtbr = waitbar(0,'Computing Modes...') ;
                     for r = 1:length(R0)
                         K = Kstab(r,1:R0(r)) ;
-                        computeU ;
+                        V = [] ; computeU ; V = [] ;
                         Ustab(:,r,1:R0(r)) = reshape(U,[prod(Lp),R0(r)]) ;
                         wtbr = waitbar(r/length(R0),wtbr) ;
                     end

@@ -3,7 +3,7 @@
 clc
 clear all
 %close all
-%clf ;
+clf ;
 
 
 Ns = 100 ; % Number of Samples
@@ -194,10 +194,10 @@ clf ;
 
 
 Ns = 100 ; % Number of Samples
-F = logspace(log10(0.000001),log10(Ns/2.01),10)*pi/Ns;%*(1+.05i) ; % Tones (normalized freq.)
+F = logspace(log10(0.001),log10(Ns/2.01),10)*pi/Ns*(1+.05i) ; % Tones (normalized freq.)
 U = [100] ; % Amplitudes
 FUNC = 'exp' ;
-SNR = 1e4 ;
+SNR = 1e2 ;
 nMCMC = 100 ;
 profiler = false ;
 
@@ -225,6 +225,7 @@ for f = 1:nF
     for m = 1:nMCMC
         Amp = ((rand(1)*2-1)+1i*(rand(1)*2-1)) ;
         Amp = Amp./abs(Amp)*U ;
+        Amp = U ;
         switch FUNC
             case 'exp'
                 Signal = Amp*exp(1i*F(f).'*t) ;
@@ -264,14 +265,14 @@ tMSE = (mean(SE,2)) ;
 minSE = min(SE,[],2) ; ... meandK - std(dK,0,3) ;
 maxSE = max(SE,[],2) ; ... meandK + std(dK,0,3) ;
 
-plot(F/pi,mindK,':k') ;
-plot(F/pi,meandK,'.-k','markersize',20) ;
-plot(F/pi,maxdK,':k') ;
-plot(F/pi,tMSE,'.r','markersize',35) ;
-%plot(F/pi,maxSE,':r') ;
-%plot(F/pi,minSE,':r') ;
-plot(F/pi,stdK,'ob','markersize',20) ;
-plot(F/pi,(F/pi).^2,'-.r','markersize',20) ;
+plot(F/2/pi*Ns,mindK,':k') ;
+plot(F/2/pi*Ns,meandK,'.-k','markersize',20) ;
+plot(F/2/pi*Ns,maxdK,':k') ;
+plot(F/2/pi*Ns,tMSE,'.r','markersize',35) ;
+plot(F/2/pi*Ns,maxSE,':r') ;
+plot(F/2/pi*Ns,minSE,':r') ;
+plot(F/2/pi*Ns,stdK,'ob','markersize',20) ;
+%plot(F/pi,(F/pi).^2,'-.r','markersize',20) ;
 set(gca,'xscale','log','yscale','log') ;
 grid on
 
@@ -284,9 +285,9 @@ clear all
 %close all
 
 
-Ns = 100 ; % Number of Sensors
-Nsnap = 100 ; % Number of Snapshots
-F = [-.023-.1i*0]*pi ; % Tones (normalized freq.)
+Ns = 1000 ; % Number of Sensors
+Nsnap = 10 ; % Number of Snapshots
+F = [-.023-.01i]*pi ; % Tones (normalized freq.)
 U = [1] ; % Amplitudes
 SNR = logspace(-1,4,10) ;
 nMCMC = 100 ;
@@ -301,10 +302,10 @@ EspArgs = {... Arguments for ESPRIT
            'R0' , nF ; ...
            'DECIM' , [1 1] ; ...
            'FUNC' , 'exp' ; ...
-           'FIT' , 'LS' ; ...
+           'FIT' , 'TLS' ; ...
            'SOLVER' , 'eig' ; ...
            'DEBUG' , false ; ...
-           'M/L' , 2/3 ; ... 
+           'M/L' , 0 ; ... 
            'COMPUTE_dK', true ;...
           }' ;
 
@@ -324,7 +325,7 @@ for s = 1:nSNR
         noise = noise*norm(Signal)/norm(noise)/SNR(s) ;
         out = ESPRIT(Signal+noise,EspArgs{:}) ;
         K(s,:,m) = out.K ;
-        dK(s,:,m) = out.dK ;
+        dK(s,:,m) = out.dK.^2 ;
         if toc(ti)>.2
             ti = tic ;
             wtbr = waitbar((m+(s-1)*nMCMC)/nMCMC/nSNR,wtbr) ;
@@ -343,7 +344,10 @@ stdK = var(K,0,3) ;
 meandK = mean(abs(dK),3) ;
 mindK = min(abs(dK),[],3) ; ... meandK - std(dK,0,3) ;
 maxdK = max(abs(dK),[],3) ; ... meandK + std(dK,0,3) ;
-tMSE = (mean(abs(K-repmat(F.',[nSNR 1 nMCMC])).^2,3)) ;
+MSE = abs(K-repmat(F.',[nSNR 1 nMCMC])).^2 ;
+tMSE = mean(MSE,3) ;
+minSE = min(MSE,[],3) ;
+maxSE = max(MSE,[],3) ;
 
 
 clf ;
@@ -351,6 +355,8 @@ plot(SNR,mindK,':k') ;
 plot(SNR,meandK,'.-k','markersize',20) ;
 plot(SNR,maxdK,':k') ;
 plot(SNR,tMSE,'.r','markersize',35) ;
+plot(SNR,maxSE,':r') ;
+plot(SNR,minSE,':r') ;
 plot(SNR,stdK,'ob','markersize',20) ;
 set(gca,'xscale','log','yscale','log') ;
 
@@ -364,10 +370,10 @@ clear all
 
 
 Ns = 50 ; % Number of Sensors
-Nsnap = unique(round(logspace(log10(5),log10(500),10))) ; % Number of Snapshots
-F = [-.0023-.1i*0]*pi ; % Tones (normalized freq.)
+Nsnap = unique(round(logspace(log10(5),log10(50),10))) ; % Number of Snapshots
+F = [-.000023-.1i*0]*pi ; % Tones (normalized freq.)
 U = [1] ; % Amplitudes
-SNR = 10^2 ;
+SNR = 1e2 ;
 nMCMC = 100 ;
 profiler = false ;
 
@@ -380,7 +386,7 @@ EspArgs = {... Arguments for ESPRIT
            'R0' , nF ; ...
            'DECIM' , [1 1] ; ...
            'FUNC' , 'exp' ; ...
-           'FIT' , 'LS' ; ...
+           'FIT' , 'TLS' ; ...
            'SOLVER' , 'eig' ; ...
            'DEBUG' , false ; ...
            'M/L' , 0 ; ... 
@@ -403,7 +409,7 @@ for s = 1:nNsnap
         noise = noise*norm(Signal)/norm(noise)/SNR ;
         out = ESPRIT(Signal+noise,EspArgs{:}) ;
         K(s,:,m) = out.K ;
-        dK(s,:,m) = out.dK ;
+        dK(s,:,m) = out.dK.^2 ;
         if toc(ti)>.2
             ti = tic ;
             wtbr = waitbar((m+(s-1)*nMCMC)/nMCMC/nNsnap,wtbr) ;
@@ -434,8 +440,8 @@ plot(Nsnap,mindK,':k') ;
 plot(Nsnap,meandK,'.-k','markersize',20) ;
 plot(Nsnap,maxdK,':k') ;
 plot(Nsnap,tMSE,'.r','markersize',35) ;
-%plot(Nsnap,maxSE,':r') ;
-%plot(Nsnap,minSE,':r') ;
+plot(Nsnap,maxSE,':r') ;
+plot(Nsnap,minSE,':r') ;
 plot(Nsnap,stdK,'ob','markersize',20) ;
 set(gca,'xscale','log','yscale','log') ;
 
