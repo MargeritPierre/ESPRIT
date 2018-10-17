@@ -730,8 +730,8 @@ function OUT = ESPRIT(Signal,varargin)
 % UNCERTAINTY ESTIMATION dK
     function computeUncertainties
         % Options (hard-coded for now)
-            estimate =   'stdK' ...
-                        ... 'dK' ...
+            estimate =  ... 'stdK' ...
+                         'dK' ...
                         ;
             lin_method =     'conv' ... % Linearization method for the variance:
                             ... 'kron'...
@@ -823,7 +823,7 @@ function OUT = ESPRIT(Signal,varargin)
                                     Arn = exp(1i*K(s,r)*DECIM_K(s)) ;
                                 case 'cos'
                                     PIrn = cos(K(s,r)*DECIM_K(s)) ;
-                                    Arn = sin(K(s,r)*DECIM_K(s)) ;
+                                    Arn = abs(sin(K(s,r)*DECIM_K(s))) ;
                             end
                         % Linearization method
                             switch lin_method
@@ -852,12 +852,13 @@ function OUT = ESPRIT(Signal,varargin)
                                             case 'full'
                                                 dK(s,r) = sqrt(zn'*var_dS*zn) ;
                                         end
+                                        dK(s,r) = dK(s,r)/abs(Arn) ;
                                     case 'dK'
-                                        dK(s,r) = abs(zn'*dS(:)) ;
+                                        dK(s,r) = abs(abs(zn')*dS(:)/Arn) ;
                                 end
                             end
                         % Common terms
-                            dK(s,r) = dK(s,r)/DECIM_K(s)/abs(Arn)  ;
+                            dK(s,r) = dK(s,r)/DECIM_K(s)  ;
                     end
             end
     end

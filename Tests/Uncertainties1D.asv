@@ -10,7 +10,7 @@ Ns = 100 ; % Number of Samples
 F = 0.1;%+0.1i ; (linspace(-1,1,1)*.04 + .03)*pi*(1-.10i) ; %rand(1,8)*0.49*pi ; %[.05 -.1 .3 -.02]*pi%] ; % Tones (normalized freq.)];%]%
 U = [1] ; % Amplitudes
 SNR = logspace(-2,4,10) ;
-FUNC = 'exp' ;
+FUNC = 'cos' ;
 nMCMC = 100 ;
 profiler = false ;
 
@@ -103,10 +103,10 @@ clear all
 clf ;
 
 
-Ns = round(logspace(log10(20),log10(100),20)) ; % Number of Samples
+Ns = round(logspace(log10(10),log10(100),20)) ; % Number of Samples
 F = [.3]*pi ; % Tones (normalized freq.)
 U = [1] ; % Amplitudes
-FUNC = 'cos' ;
+FUNC = 'exp' ;
 SNR = 1e2 ;
 nMCMC = 100 ;
 profiler = false ;
@@ -192,10 +192,11 @@ clear all
 
 clf 
 
+
 Ns = 100 ; % Number of Samples
-F = logspace(log10(0.1),log10(Ns/10),10)*pi/Ns*(1+.01i) ; % Tones (normalized freq.)
+F = logspace(log10(0.1),log10(Ns/1.1),10)*pi/Ns*(1+.05i) ; % Tones (normalized freq.)
 U = [100] ; % Amplitudes
-FUNC = 'cos' ;
+FUNC = 'exp' ;
 SNR = 1e2 ;
 nMCMC = 100 ;
 profiler = false ;
@@ -650,20 +651,17 @@ grid on
 
 
 
-%% 1D UNCERTAINTY ESTIMATION (VARIATION OF THE NUMBER OF COMPONENTS)
+%% 1D UNCERTAINTY ESTIMATION (VARIATION OF THE NUMBER OF COMPONENTS FOR MODAL ANALYSIS)
 
 clc
 clear all
 
 
-%clf ;
+clf ;
 linestyle = '-' ;
-decim = 1 ;
-Ns = 100*decim ; % Number of Samples
-nT = 1:15 ; unique(ceil(linspace(1,1/4*Ns,10))) ; % number of tones
-Fmax = .8/decim ; 
-Fmin = 0.05/decim ; 0.05 ;  
-eta = 0.01 ;
+Ns = 100 ; % Number of Samples
+nFmax = 30 ; % number of tones
+Fmin = 0.05 ; Fmax = .5 ; eta = 0 ;
 SNR = 1e2 ;
 nMCMC = 100 ;
 NoiseAmp = 1 ; rand(Ns,1) ; % Noise Amplitudes for non-uniform noise
@@ -671,28 +669,27 @@ profiler = false ;
 
 U = [100] ; % Amplitudes
 t = 0:1:Ns-1 ; % time 
-nTmax = length(nT) ;
 
 EspArgs = {... Arguments for ESPRIT
            'DIMS_K' , 2 ; ...
            'CRITERION' , 'MDL' ; ...
-           'DECIM' , [1 decim] ; ...
+           'DECIM' , [1 1] ; ...
            'FUNC' , 'exp' ; ...
            'FIT' , 'LS' ; ...
            'SOLVER' , 'eig' ; ...
            'DEBUG' , false ; ...
-           'M/L' , 1/2 ; ...
+           'M/L' , 2/3 ; ...
            'COMPUTE_dK', true ;...
           }' ;
 
-K = (NaN+1i*NaN)*zeros(nTmax,nTmax,nMCMC) ;
-dK = (NaN)*zeros(nTmax,nTmax,nMCMC) ; 
-SE = (NaN)*zeros(nTmax,nTmax,nMCMC) ;  
+K = (NaN+1i*NaN)*zeros(nFmax,nFmax,nMCMC) ;
+dK = (NaN)*zeros(nFmax,nFmax,nMCMC) ; 
+SE = (NaN)*zeros(nFmax,nFmax,nMCMC) ;  
 wtbr = waitbar(0) ;
 ti = tic ;
 if profiler ; profile on ; end
-for ff = 1:nTmax
-    nF = nT(ff) ;
+for ff = 1:nFmax
+    nF = ff ;
     F = linspace(Fmin,Fmax,nF)*pi*(1+1i*eta/Ns*100) ; % Tones (normalized freq.)
     for m = 1:nMCMC
         Amp = ((rand(nF,1)*2-1)+1i*(rand(nF,1)*2-1)) ;
@@ -710,7 +707,7 @@ for ff = 1:nTmax
         SE(ff,1:nF,m) = abs(K(ff,1:nF,m)-F).^2 ;
         if toc(ti)>.2
             ti = tic ;
-            wtbr = waitbar((m+(ff-1)*nMCMC)/nMCMC/nTmax,wtbr) ;
+            wtbr = waitbar((m+(ff-1)*nMCMC)/nMCMC/nFmax,wtbr) ;
         end
     end
 end
@@ -719,19 +716,40 @@ if profiler ; profile viewer ; end
 drawnow ;
 
 
+%%
+
+clf
 meandK = mean(dK,3) ;
 MSE = mean(SE,3) ;
 
 notNaN = ~isnan(K(:,:,1)) ;
 totalMeandK = meandK ; totalMeandK(isnan(totalMeandK)) = 0 ; totalMeandK = sum(bsxfun(@times,totalMeandK,notNaN),2)./sum(notNaN,2) ;
-totalMSE = MSE ; totalMSE(isnan(totalMSE)) = 0 ; totalMSE = sum(bsxfun(@times,totalMSE,notNaN),2)./sum(notNaN,2) ;
+totalMeandK = meandK ; totalMeandK(isnan(totalMeandK)) = 0 ; totalMeandK = sum(bsxfun(@times,totalMSE,notNaN),2)./sum(notNaN,2) ;
 
-%plot(1:nFmax,meandK)
-%plot(1:nFmax,MSE,'ob')
-plot(1:nTmax,totalMeandK,'-.')
-set(gca,'colororderindex',get(gca,'colororderindex')-1) ;
-plot(1:nTmax,totalMSE,'.','markersize',35)
+plot(1:nFmax,meandK)
+plot(1:nFmax,totalMeandK,'k')
+plot(1:nFmax,MSE,'ob')
 set(gca,'yscale','log')
+
+%%
+
+plot(SNR,pMDL,linestyle) ;
+plot(SNR,pESTER,linestyle) ;
+plot(SNR,pSAMOS,linestyle) ;
+set(gca,'xscale','log') ;
+set(gca,'ylim',[0 1]) ;
+lgd = findobj(gcf,'type','legend') ;
+if isempty(lgd)
+    legend('MDL','ESTER','SAMOS')
+else
+    strLgd = lgd.String ;
+    strLgd{end+1} = 'MDL' ;
+    strLgd{end+1} = 'ESTER' ;
+    strLgd{end+1} = 'SAMOS' ;
+    legend(strLgd) ;
+end
 grid on
+
+
 
 
