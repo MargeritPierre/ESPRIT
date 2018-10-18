@@ -294,6 +294,8 @@ function OUT = ESPRIT(Signal,varargin)
         
 % STABILIZATION DIAGRAM
     if STABILDIAG
+        Kstab = [] ;
+        Ustab = [] ;
         MAC ;
         if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Stabilization Diagram : ') ; lastTime = tic ; end
         stabilizationDiagram() ;
@@ -370,6 +372,11 @@ function OUT = ESPRIT(Signal,varargin)
             OUT.MDL = MDL ;
             OUT.ESTER = ESTER ;
             OUT.SAMOS = SAMOS ;
+        end
+    % Stabilization Diagram 
+        if STABILDIAG
+            OUT.Kstab = Kstab ;
+            OUT.Ustab = Ustab ;
         end
     
 
