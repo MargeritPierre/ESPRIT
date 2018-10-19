@@ -7,8 +7,8 @@ clf ;
 
 
 Ns = 100 ; % Number of Samples
-F = 0.1;%+0.1i ; (linspace(-1,1,1)*.04 + .03)*pi*(1-.10i) ; %rand(1,8)*0.49*pi ; %[.05 -.1 .3 -.02]*pi%] ; % Tones (normalized freq.)];%]%
-U = [1] ; % Amplitudes
+F = 0.3*pi;%+0.1i ; (linspace(-1,1,1)*.04 + .03)*pi*(1-.10i) ; %rand(1,8)*0.49*pi ; %[.05 -.1 .3 -.02]*pi%] ; % Tones (normalized freq.)];%]%
+a = [1+1i] ; % Amplitudes
 SNR = logspace(-2,4,10) ;
 FUNC = 'exp' ;
 nMCMC = 100 ;
@@ -21,24 +21,30 @@ nSNR = length(SNR) ; % number of SNR levels
 EspArgs = {... Arguments for ESPRIT
            'DIMS_K' , 2 ; ...
            'R0' , nF ; ...
-           'DECIM' , [1 1] ; ...
-           'FUNC' , FUNC ; ...
+           'DECIM' , [1 2] ; ...
+           'FUNC' , FUNC ; 
            'FIT' , 'LS' ; ...
            'SOLVER' , 'eig' ; ...
            'DEBUG' , false ; ...
            'M/L' , [] ; ...
            'COMPUTE_dK', true ;...
+           'COMPUTE_U', true ;...
+           'COMPUTE_dU', true ;...
           }' ;
 
 K = zeros(nSNR,nF,nMCMC) ;
 dK = K ;
+Amps = zeros(nSNR,nF,nMCMC) ;
+U = zeros(nSNR,nF,nMCMC) ;
+dU = zeros(nSNR,nF,nMCMC) ;
 wtbr = waitbar(0) ;
 ti = tic ;
 if profiler ; profile on ; end
 for s = 1:nSNR
     for m = 1:nMCMC
         Amp = ((rand(1,nF)*2-1)+1i*(rand(1,nF)*2-1)) ;
-        Amp = Amp./abs(Amp)*U ;
+        Amp = Amp./abs(Amp)*a ;
+        Amp = a ; % Comment if you want a random phase
         switch FUNC
             case 'exp'
                 Signal = Amp*exp(1i*F.'*t) ;
@@ -53,6 +59,9 @@ for s = 1:nSNR
         [~,ind] = sort(real(out.K)) ;
         K(s,:,m) = out.K(ind) ;
         dK(s,:,m) = out.dK(ind).^2 ;
+        Amps(s,:,m) = Amp ;
+        U(s,:,m) = out.U(ind) ;
+        dU(s,:,m) = out.dU(ind).^2 ;
         if toc(ti)>.2
             ti = tic ;
             wtbr = waitbar((m+(s-1)*nMCMC)/nMCMC/nSNR,wtbr) ;
@@ -63,35 +72,60 @@ delete(wtbr) ;
 if profiler ; profile viewer ; end
 drawnow ;
 
-dK = reshape(dK,nSNR,[]) ;
-stdK = mean(var(K,0,3),2) ;
-meandK = mean(abs(dK),2) ;
-mindK = min(abs(dK),[],2) ; ... meandK - std(dK,0,3) ;
-maxdK = max(abs(dK),[],2) ; ... meandK + std(dK,0,3) ;
+% Wavevectors
+    % Standard deviation
+        stdK = mean(var(K,0,3),2) ;
+    % Computed values
+        dK = reshape(dK,nSNR,[]) ;
+        meandK = mean(abs(dK),2) ;
+        mindK = min(abs(dK),[],2) ;
+        maxdK = max(abs(dK),[],2) ;
+    % Mean Error
+        [~,ind] = sort(real(F)) ;
+        ME = abs(K-repmat(sort(F(ind)),[nSNR 1 nMCMC])).^2 ;
+        ME = reshape(ME,nSNR,[]) ;
+        tMSE = (mean(ME,2)) ;
+        minSE = min(ME,[],2) ;
+        maxSE = max(ME,[],2) ;
+    % Figure
+        axK = findobj(gcf,'tag','axK') ; if isempty(axK); axK = mysubplot(1,2,1) ; end
+            title 'Uncertainty on K'
+            plot(SNR,mindK,':k') ;
+            plot(SNR,meandK,'.-k','markersize',20) ;
+            plot(SNR,maxdK,':k') ;
+            plot(SNR,tMSE,'.r','markersize',35) ;
+            plot(SNR,maxSE,':r') ;
+            plot(SNR,minSE,':r') ;
+            plot(SNR,stdK,'ob','markersize',20) ;
+            set(gca,'xscale','log','yscale','log') ;
+            grid on
 
-[~,ind] = sort(real(F)) ;
-SE = abs(K-repmat(sort(F(ind)),[nSNR 1 nMCMC])).^2 ;
-SE = reshape(SE,nSNR,[]) ;
-tMSE = (mean(SE,2)) ;
-minSE = min(SE,[],2) ; ... meandK - std(dK,0,3) ;
-maxSE = max(SE,[],2) ; ... meandK + std(dK,0,3) ;
-
-% plot(SNR,meandK,'.-','markersize',20) ;
-% set(gca,'colororderindex',get(gca,'colororderindex')-1) ;
-% plot(SNR,tMSE,'.','markersize',35) ;
-% set(gca,'xscale','log','yscale','log') ;
-% grid on
-
-
-plot(SNR,mindK,':k') ;
-plot(SNR,meandK,'.-k','markersize',20) ;
-plot(SNR,maxdK,':k') ;
-plot(SNR,tMSE,'.r','markersize',35) ;
-plot(SNR,maxSE,':r') ;
-plot(SNR,minSE,':r') ;
-plot(SNR,stdK,'ob','markersize',20) ;
-set(gca,'xscale','log','yscale','log') ;
-grid on
+% Amplitudes
+    % Standard deviation
+        stdU = mean(var(U,0,3),2) ;
+    % Computed values
+        dU = reshape(dU,nSNR,[]) ;
+        meandU = mean(abs(dU),2) ;
+        mindU = min(abs(dU),[],2) ;
+        maxdU = max(abs(dU),[],2) ;
+    % Mean Error
+        MEU = abs(U-Amps).^2 ;
+        MEU = reshape(MEU,nSNR,[]) ;
+        tMSEU = (mean(MEU,2)) ;
+        minSEU = min(MEU,[],2) ;
+        maxSEU = max(MEU,[],2) ;
+    % Figure
+        axU = findobj(gcf,'tag','axU') ; if isempty(axU); axU = mysubplot(1,2,2) ; end
+            title 'Uncertainty on U'
+            plot(SNR,mindU,':k') ;
+            plot(SNR,meandU,'.-k','markersize',20) ;
+            plot(SNR,maxdU,':k') ;
+            plot(SNR,tMSEU,'.r','markersize',35) ;
+            plot(SNR,maxSEU,':r') ;
+            plot(SNR,minSEU,':r') ;
+            plot(SNR,stdU,'ob','markersize',20) ;
+            set(gca,'xscale','log','yscale','log') ;
+            grid on
 
 
 
@@ -124,6 +158,8 @@ EspArgs = {... Arguments for ESPRIT
            'DEBUG' , false ; ...
            'M/L' , [] ; ...
            'COMPUTE_dK', true ;...
+           'COMPUTE_U', true ;...
+           'COMPUTE_dU', true ;...
           }' ;
 
 K = zeros(nNs,nF,nMCMC) ;
@@ -167,10 +203,10 @@ stdK = var(K,0,3) ;
 meandK = mean(abs(dK),3) ;
 mindK = min(abs(dK),[],3) ; ... meandK - std(dK,0,3) ;
 maxdK = max(abs(dK),[],3) ; ... meandK + std(dK,0,3) ;
-SE = abs(K-repmat(F.',[nNs 1 nMCMC])).^2 ;
-tMSE = (mean(SE,3)) ;
-minSE = min(SE,[],3) ; ... meandK - std(dK,0,3) ;
-maxSE = max(SE,[],3) ; ... meandK + std(dK,0,3) ;
+ME = abs(K-repmat(F.',[nNs 1 nMCMC])).^2 ;
+tMSE = (mean(ME,3)) ;
+minSE = min(ME,[],3) ; ... meandK - std(dK,0,3) ;
+maxSE = max(ME,[],3) ; ... meandK + std(dK,0,3) ;
 
 
 plot(Ns,mindK,':k') ;
@@ -193,7 +229,7 @@ clear all
 clf 
 
 Ns = 100 ; % Number of Samples
-F = logspace(log10(0.1),log10(Ns/10),10)*pi/Ns*(1+.01i) ; % Tones (normalized freq.)
+F = logspace(log10(0.1),log10(Ns/10),10)*pi/Ns*(1+.00i) ; % Tones (normalized freq.)
 U = [100] ; % Amplitudes
 FUNC = 'cos' ;
 SNR = 1e2 ;
@@ -213,6 +249,8 @@ EspArgs = {... Arguments for ESPRIT
            'DEBUG' , false ; ...
            'M/L' , [] ; ...
            'COMPUTE_dK', true ;...
+           'COMPUTE_U', true ;...
+           'COMPUTE_dU', true ;...
           }' ;
 
 K = zeros(nF,1,nMCMC) ;
@@ -258,11 +296,11 @@ mindK = min(abs(dK),[],2) ; ... meandK - std(dK,0,3) ;
 maxdK = max(abs(dK),[],2) ; ... meandK + std(dK,0,3) ;
 
 [~,ind] = sort(real(F)) ;
-SE = abs(K-repmat(F.',[1 1 nMCMC])).^2 ;
-SE = reshape(SE,nF,[]) ;
-tMSE = (mean(SE,2)) ;
-minSE = min(SE,[],2) ; ... meandK - std(dK,0,3) ;
-maxSE = max(SE,[],2) ; ... meandK + std(dK,0,3) ;
+ME = abs(K-repmat(F.',[1 1 nMCMC])).^2 ;
+ME = reshape(ME,nF,[]) ;
+tMSE = (mean(ME,2)) ;
+minSE = min(ME,[],2) ; ... meandK - std(dK,0,3) ;
+maxSE = max(ME,[],2) ; ... meandK + std(dK,0,3) ;
 
 plot(F/2/pi*Ns,mindK,':k') ;
 plot(F/2/pi*Ns,meandK,'.-k','markersize',20) ;
@@ -437,10 +475,10 @@ meandK = mean(abs(dK),3) ;
 mindK = min(abs(dK),[],3) ; ... meandK - std(dK,0,3) ;
 maxdK = max(abs(dK),[],3) ; ... meandK + std(dK,0,3) ;
 
-SE = abs(K-repmat(F.',[nNsnap 1 nMCMC])).^2 ;
-tMSE = (mean(SE,3)) ;
-minSE = min(SE,[],3) ; ... meandK - std(dK,0,3) ;
-maxSE = max(SE,[],3) ; ... meandK + std(dK,0,3) ;
+ME = abs(K-repmat(F.',[nNsnap 1 nMCMC])).^2 ;
+tMSE = (mean(ME,3)) ;
+minSE = min(ME,[],3) ; ... meandK - std(dK,0,3) ;
+maxSE = max(ME,[],3) ; ... meandK + std(dK,0,3) ;
 
 clf ;
 plot(Nsnap,mindK,':k') ;
@@ -529,10 +567,10 @@ stdK = var(K,0,3) ;
 meandK = mean(abs(dK),3) ;
 mindK = min(abs(dK),[],3) ; ... meandK - std(dK,0,3) ;
 maxdK = max(abs(dK),[],3) ; ... meandK + std(dK,0,3) ;
-SE = abs(K-repmat(F.',[nM_L 1 nMCMC])).^2 ;
-tMSE = (mean(SE,3)) ;
-minSE = min(SE,[],3) ; ... meandK - std(dK,0,3) ;
-maxSE = max(SE,[],3) ; ... meandK + std(dK,0,3) ;
+ME = abs(K-repmat(F.',[nM_L 1 nMCMC])).^2 ;
+tMSE = (mean(ME,3)) ;
+minSE = min(ME,[],3) ; ... meandK - std(dK,0,3) ;
+maxSE = max(ME,[],3) ; ... meandK + std(dK,0,3) ;
 
 CRB = 6/SNR/Ns^3 ;
 clf ;
@@ -629,10 +667,10 @@ meandK = mean(abs(dK),3) ;
 mindK = min(abs(dK),[],3) ;
 maxdK = max(abs(dK),[],3) ;
 
-SE = abs(bsxfun(@minus,K,F.')).^2 ;
-tMSE = mean(SE,3) ;
-minSE = min(SE,[],3) ;
-maxSE = max(SE,[],3) ;
+ME = abs(bsxfun(@minus,K,F.')).^2 ;
+tMSE = mean(ME,3) ;
+minSE = min(ME,[],3) ;
+maxSE = max(ME,[],3) ;
 
 
 %plot(dF,mindK,':k') ;
@@ -687,7 +725,7 @@ EspArgs = {... Arguments for ESPRIT
 
 K = (NaN+1i*NaN)*zeros(nTmax,nTmax,nMCMC) ;
 dK = (NaN)*zeros(nTmax,nTmax,nMCMC) ; 
-SE = (NaN)*zeros(nTmax,nTmax,nMCMC) ;  
+ME = (NaN)*zeros(nTmax,nTmax,nMCMC) ;  
 wtbr = waitbar(0) ;
 ti = tic ;
 if profiler ; profile on ; end
@@ -707,7 +745,7 @@ for ff = 1:nTmax
         out = ESPRIT(Signal+noise,ESPARGS{:}) ;
         [K(ff,1:nF,m),indsort] = sort(out.K) ;
         dK(ff,1:nF,m) = out.dK(indsort).^2 ;
-        SE(ff,1:nF,m) = abs(K(ff,1:nF,m)-F).^2 ;
+        ME(ff,1:nF,m) = abs(K(ff,1:nF,m)-F).^2 ;
         if toc(ti)>.2
             ti = tic ;
             wtbr = waitbar((m+(ff-1)*nMCMC)/nMCMC/nTmax,wtbr) ;
@@ -720,7 +758,7 @@ drawnow ;
 
 
 meandK = mean(dK,3) ;
-MSE = mean(SE,3) ;
+MSE = mean(ME,3) ;
 
 notNaN = ~isnan(K(:,:,1)) ;
 totalMeandK = meandK ; totalMeandK(isnan(totalMeandK)) = 0 ; totalMeandK = sum(bsxfun(@times,totalMeandK,notNaN),2)./sum(notNaN,2) ;

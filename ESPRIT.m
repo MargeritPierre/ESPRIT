@@ -17,7 +17,9 @@ function OUT = ESPRIT(Signal,varargin)
 %           boolean (false)
 %       SIGNAL_MODEL : compute the signal model 
 %           boolean (false)
-%       COMPUTE_dK : compute uncertainties 
+%       COMPUTE_dK : compute uncertainties on wavevctors
+%           boolean (false)
+%       COMPUTE_dU : compute uncertainties on amplitudes 
 %           boolean (false)
 %       DIMS_K : dimensions of the wavevectors 
 %           1xD integer (ndims(Signal))
@@ -167,10 +169,11 @@ function OUT = ESPRIT(Signal,varargin)
         %Signal = Signal-repmat(mean(Signal,2),[1 size(Signal,2)]) ;
         
     % Output Initialization
-        K = zeros([max(R0) length(DIMS_K)]) ; % Wavevectors Matrix
-        dK = zeros([max(R0) length(DIMS_K)]) ; % Estimated Variance
+        K = [] ; % Wavevectors Matrix
+        dK = [] ; % Wavevectors Uncertainty
         V = [] ; % Steering Matrix
-        U = zeros([max(R0) length(DIMS_P)+1]) ; % Amplitudes
+        U = [] ; % Amplitudes
+        dU = [] ; % Amplitudes Uncertainty
         if any(isCOS) ; PHI = [] ; end % Phases of the cosinuses
         SignalModel = [] ; % Reconstructed Signal Model
         dS = [] ; % Errors
@@ -321,7 +324,7 @@ function OUT = ESPRIT(Signal,varargin)
     
     
 % ESTIMATE UNCERTAINTIES
-    if COMPUTE_dK 
+    if COMPUTE_dK || COMPUTE_dU 
         if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Uncertainty Estimation : ') ; lastTime = tic ; end
         computeUncertainties ;
     end
@@ -331,9 +334,9 @@ function OUT = ESPRIT(Signal,varargin)
     if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Output : ') ; lastTime = tic ; end
     % Input arguments
         OUT.varargin = varargin ;
+        OUT.R0 = R0 ;
     % Results
         OUT.K = K ;
-        OUT.dK = dK ;
         OUT.V = V ;
         OUT.U = U ;
         if any(isCOS) ; OUT.PHI = PHI ; end
@@ -347,6 +350,9 @@ function OUT = ESPRIT(Signal,varargin)
             end
             OUT.RelativeError = norm(dS(:))/norm(Signal(:)) ;
         end
+    % Uncertainties
+        OUT.dK = dK ;
+        OUT.dU = dU ;
     % Sizes
         OUT.Lp = Lp ;
         OUT.Lk = Lk ;
@@ -726,7 +732,7 @@ function OUT = ESPRIT(Signal,varargin)
             end
     end
 
-% SIGNAl MODEL CONSTRUCTION
+% SIGNAL MODEL CONSTRUCTION
     function computeSignalModel()
         if isempty(V) ; computeU() ; end
         SignalModel = (V*A).' ;
@@ -736,27 +742,24 @@ function OUT = ESPRIT(Signal,varargin)
 
 % UNCERTAINTY ESTIMATION dK
     function computeUncertainties
-        % Options (hard-coded for now)
-            estimate =  ... 'stdK' ...
-                         'dK' ...
+        % OPTIONS (hard-coded for now)
+            estimate =  ... 'std' ... % Standard Deviation
+                         'delta' ... % Sensibility or perturbation
                         ;
             lin_method =     'conv' ... % Linearization method for the variance:
                             ... 'kron'...
                             ... 'none'...  
                         ;
-            covar_estim =   ... 'uniform' ... % Estimation of the perturbation covariance: 
-                             'diagonal' ...
+            covar_estim =    'uniform' ... % Estimation of the perturbation covariance: 
+                            ... 'diagonal' ...
                             ... 'full' ...
                             ;
             formulation =   ... 'analytic' ... % with Vandermonde matrices etc. Do not work with cosinuses
                              'eigenspace' ... % from the eigenspace
                             ;
-        % Init
-            dK = zeros(size(K)) ;
-        % Signal perturbation
+        % SIGNAL PERTURBATION AND COVARIANCE
             if isempty(SignalModel) ; computeSignalModel() ; end
-        % Perturbation covariance
-            if ~strcmp(lin_method,'none') && strcmp(estimate,'stdK') % Variance estimation: std(K)
+            if ~strcmp(lin_method,'none') && strcmp(estimate,'std') % standard deviation estimation: std
                 switch covar_estim
                     case 'uniform'
                         var_dS = var(dS(:),0); % scalar
@@ -766,107 +769,141 @@ function OUT = ESPRIT(Signal,varargin)
                         dSzm = (dS-repmat(mean(dS,1),[size(dS,1) 1])).' ;
                         var_dS = dSzm*dSzm'/size(dSzm,2) ; % matrix
                 end
-            else % punctual uncertainty estimation: dK
-                dH = buildHss(dS) ;
             end
-        % Selection matrices if needed
-            switch lin_method
-                case 'kron'
-                    % M Matrix
-                        Ip = speye(length(indP)) ;
-                        I = speye(prod(Lk)) ;
-                        M = sparse(prod(Kk)*prod(Mk)*length(indP),prod(Lk)*length(indP)) ;
-                        for m = 1:prod(Mk)
-                            Im = I(indHbH{1}(:,m),:) ;
-                            for i = 2:n_indHbH
-                                Im = Im + I(indHbH{i}(:,m),:) ;
-                            end
-                            Mm = kron(Ip,Im);
-                            M((1:prod(Kk)*length(indP))+(m-1)*(prod(Kk)*length(indP)),:) = Mm ;
-                        end
-                otherwise
-                    % Jdelta matrix (decimation selection matrix)
-                        I = speye(prod(Lk),prod(Lk-Mk+1)) ;
-                        Jdelta = I(indHbH{1}(:,1),:) ;
-                        for i = 2:n_indHbH
-                            Jdelta = Jdelta/2 + I(indHbH{i}(:,1),:)/2 ;
-                        end
-            end
-        % Pre-Computations
-            shifts = eye(length(DIMS_K)) ; % /!\ SHIFTS IS DEFAULT HERE !
-            % Right vector of the bilinear form
-                switch formulation
-                    case 'analytic'
-                        % Partial Vandermonde matrices
-                            if isempty(V) ; buildVandermonde(Lk) ; end
-                            P = V(indHbH{1}(:,1),:) ;
-                            Q = V(indHbH{1}(1,:),:) ;
-                        % Complete right-Vandermonde Matrix
-                            QA = zeros(prod(Mk)*length(indP),R0(R)) ;
-                            for p = 1:length(indP) 
-                                QA((1:prod(Mk))+(p-1)*prod(Mk),:) = Q*diag(A(:,indP(p))) ;
-                            end
-                            x = (QA\eye(size(QA,1)))' ;
-                    case 'eigenspace'
-                        if isempty(Hss) ; Hss = buildHss(SignalModel) ; end
-                        x = conj(bsxfun(@(x,c)x./c,Hss'*W(:,1:R0(R)),lambda(1:R0(R)).')*T) ;
-                end
-        % Loop over the shifts
-            for s = 1:size(K,1)
-                [~,~,~,Jup,Jdwn] = selectMatrices(shifts(s,:)) ;
-                % pre-compute
-                    switch formulation
-                        case 'analytic'
-                            vn = (Jup*P)\speye(size(Jdwn,1)) ;
-                        case 'eigenspace'
-                            vn = T\((Jup*W(:,1:R0(R)))\speye(size(Jdwn,1))) ;
+        % WAVEVECTOR PERTURBATION
+            if COMPUTE_dK
+                % Perturbed HbH matrix if needed
+                    if strcmp(lin_method,'none') || strcmp(estimate,'delta')
+                        dH = buildHss(dS) ;
                     end
-                % Loop over the R0(R) components
-                    for r = 1:size(K,2)
-                        % The polar component
-                            switch FUNC(s,:)
-                                case 'exp'
-                                    PIrn = exp(1i*K(s,r)*DECIM_K(s)) ;
-                                    Arn = exp(1i*K(s,r)*DECIM_K(s)) ;
-                                case 'cos'
-                                    PIrn = cos(K(s,r)*DECIM_K(s)) ;
-                                    Arn = abs(sin(K(s,r)*DECIM_K(s))) ;
+                % Selection matrices if needed
+                    switch lin_method
+                        case 'kron'
+                            % M Matrix
+                                Ip = speye(length(indP)) ;
+                                I = speye(prod(Lk)) ;
+                                M = sparse(prod(Kk)*prod(Mk)*length(indP),prod(Lk)*length(indP)) ;
+                                for m = 1:prod(Mk)
+                                    Im = I(indHbH{1}(:,m),:) ;
+                                    for i = 2:n_indHbH
+                                        Im = Im + I(indHbH{i}(:,m),:) ;
+                                    end
+                                    Mm = kron(Ip,Im);
+                                    M((1:prod(Kk)*length(indP))+(m-1)*(prod(Kk)*length(indP)),:) = Mm ;
+                                end
+                        otherwise
+                            % Jdelta matrix (decimation selection matrix)
+                                I = speye(prod(Lk),prod(Lk-Mk+1)) ;
+                                Jdelta = I(indHbH{1}(:,1),:) ;
+                                for i = 2:n_indHbH
+                                    Jdelta = Jdelta/2 + I(indHbH{i}(:,1),:)/2 ;
+                                end
+                    end
+                % Pre-Computations
+                    shifts = eye(length(DIMS_K)) ; % /!\ SHIFTS IS DEFAULT HERE !
+                    % Right vector of the bilinear form
+                        switch formulation
+                            case 'analytic'
+                                % Partial Vandermonde matrices
+                                    if isempty(V) ; buildVandermonde(Lk) ; end
+                                    P = V(indHbH{1}(:,1),:) ;
+                                    Q = V(indHbH{1}(1,:),:) ;
+                                % Complete right-Vandermonde Matrix
+                                    QA = zeros(prod(Mk)*length(indP),R0(R)) ;
+                                    for p = 1:length(indP) 
+                                        QA((1:prod(Mk))+(p-1)*prod(Mk),:) = Q*diag(A(:,indP(p))) ;
+                                    end
+                                    x = (QA\eye(size(QA,1)))' ;
+                            case 'eigenspace'
+                                if isempty(Hss) ; Hss = buildHss(SignalModel) ; end
+                                x = conj(bsxfun(@(x,c)x./c,Hss'*W(:,1:R0(R)),lambda(1:R0(R)).')*T) ;
+                        end
+                % INITIALIZATION
+                    dK = zeros(size(K)) ;
+                % Loop over the shifts
+                    for s = 1:size(K,1)
+                        [~,~,~,Jup,Jdwn] = selectMatrices(shifts(s,:)) ;
+                        % pre-compute
+                            switch formulation
+                                case 'analytic'
+                                    vn = (Jup*P)\speye(size(Jdwn,1)) ;
+                                case 'eigenspace'
+                                    vn = T\((Jup*W(:,1:R0(R)))\speye(size(Jdwn,1))) ;
                             end
-                        % Linearization method
-                            switch lin_method
-                                case 'none' % NO LINEARIZATION, uncertainty only
-                                    vrn = (vn(r,:)*(Jdwn-PIrn*Jup))' ;
-                                    dK(s,r) = abs(vrn.'*dH*x(:,r)) ;
-                                case 'conv' % LINEAR / BY CONVOLUTION (USE OF THE HANKEL SHAPE OF Hss)
-                                    vrn = (vn(r,:)*(Jdwn-PIrn*Jup)*Jdelta)' ;
-                                    VRN = full(reshape(vrn,[1 Lk-Mk+1])) ;
-                                    XR = reshape(x(:,r),[length(indP) Mk]) ;
-                                    ZN = ifftn(bsxfun(@times,fftn(VRN,[1 Lk]),fftn(XR,[prod(Lp) Lk]))) ; % ND convolution
-                                    zn = conj(ZN(:)) ;
-                                case 'kron' % LINEAR / BY VECTORIZATION (USES vec(A*X*B) = kron(B.',A)*vec(X) ) 
-                                    vrn = (vn(r,:)*(Jdwn-PIrn*Jup))' ;
-                                    zn = (kron((x(:,r)),vrn)'*M).' ;
-                            end
-                        % Perturbation estimate
-                            if ~strcmp(lin_method,'none')
-                                switch estimate
-                                    case 'stdK'
-                                        switch covar_estim
-                                            case 'uniform'
-                                                dK(s,r) = sqrt(var_dS*sum(abs(zn).^2)) ;
-                                            case 'diagonal'
-                                                dK(s,r) = sqrt(sum(abs(zn).^2.*var_dS)) ;
-                                            case 'full'
-                                                dK(s,r) = sqrt(zn'*var_dS*zn) ;
+                        % Loop over the R0(R) components
+                            for r = 1:size(K,2)
+                                % The polar component
+                                    switch FUNC(s,:)
+                                        case 'exp'
+                                            PIrn = exp(1i*K(s,r)*DECIM_K(s)) ;
+                                            Arn = exp(1i*K(s,r)*DECIM_K(s)) ;
+                                        case 'cos'
+                                            PIrn = cos(K(s,r)*DECIM_K(s)) ;
+                                            Arn = abs(sin(K(s,r)*DECIM_K(s))) ;
+                                    end
+                                % Linearization method
+                                    switch lin_method
+                                        case 'none' % NO LINEARIZATION, uncertainty only
+                                            vrn = (vn(r,:)*(Jdwn-PIrn*Jup))' ;
+                                            dK(s,r) = abs(vrn.'*dH*x(:,r)) ;
+                                        case 'conv' % LINEAR / BY CONVOLUTION (USE OF THE HANKEL SHAPE OF Hss)
+                                            vrn = (vn(r,:)*(Jdwn-PIrn*Jup)*Jdelta)' ;
+                                            VRN = full(reshape(vrn,[1 Lk-Mk+1])) ;
+                                            XR = reshape(x(:,r),[length(indP) Mk]) ;
+                                            ZN = ifftn(bsxfun(@times,fftn(VRN,[1 Lk]),fftn(XR,[prod(Lp) Lk]))) ; % ND convolution
+                                            zn = conj(ZN(:)) ;
+                                        case 'kron' % LINEAR / BY VECTORIZATION (USES vec(A*X*B) = kron(B.',A)*vec(X) ) 
+                                            vrn = (vn(r,:)*(Jdwn-PIrn*Jup))' ;
+                                            zn = (kron((x(:,r)),vrn)'*M).' ;
+                                    end
+                                % Perturbation estimate
+                                    if ~strcmp(lin_method,'none')
+                                        switch estimate
+                                            case 'std'
+                                                switch covar_estim
+                                                    case 'uniform'
+                                                        dK(s,r) = sqrt(var_dS*sum(abs(zn).^2)) ;
+                                                    case 'diagonal'
+                                                        dK(s,r) = sqrt(sum(abs(zn).^2.*var_dS)) ;
+                                                    case 'full'
+                                                        dK(s,r) = sqrt(zn'*var_dS*zn) ;
+                                                end
+                                                dK(s,r) = dK(s,r)/abs(Arn) ;
+                                            case 'delta'
+                                                dK(s,r) = abs(abs(zn')*dS(:)/Arn) ;
                                         end
-                                        dK(s,r) = dK(s,r)/abs(Arn) ;
-                                    case 'dK'
-                                        dK(s,r) = abs(abs(zn')*dS(:)/Arn) ;
+                                    end
+                                % Common terms
+                                    dK(s,r) = dK(s,r)/DECIM_K(s)  ;
+                            end
+                    end
+            end
+        % AMPLITUDES PERTURBATION
+            if COMPUTE_dU
+                if isempty(V) ; buildVandermonde(Lk) ; end
+                % Pre-compute the inverse of V
+                    invV = V\eye(prod(Lk)) ;
+                % Uncertainty
+                    switch estimate
+                        case 'std'
+                            dU = zeros(R0(R),prod(Lp));
+                            for n = 1:Lp
+                                for r = 1:R0(R)
+                                    zrn = invV(r,:)' ;
+                                    switch covar_estim
+                                        case 'uniform'
+                                            dU(r,n) = sqrt(var_dS*sum(abs(zrn).^2)) ;
+                                        case 'diagonal'
+                                            dU(r,n) = sqrt(sum(abs(zrn).^2.*var_dS)) ;
+                                        case 'full'
+                                            dU(r,n) = sqrt(zrn'*var_dS*zrn) ;
+                                    end
                                 end
                             end
-                        % Common terms
-                            dK(s,r) = dK(s,r)/DECIM_K(s)  ;
+                        case 'delta'
+                            dU = abs(invV*dS') ;
                     end
+                dU = dU*2 ;
             end
     end
 
@@ -909,15 +946,9 @@ function OUT = ESPRIT(Signal,varargin)
                         case 'R0'
                             R0 = Value ;
                             paramSet(3) = true ;
-                        case 'CRITERION'
-                            CRITERION = Value ;
-                            paramSet(12) = true ;
                         case 'CRIT_THRS'
                             CRIT_THRS = Value ;
                             paramSet(4) = true ;
-                        case 'COMPUTE_U'
-                            COMPUTE_U = Value ;
-                            paramSet(14) = true ;
                         case 'FIT'
                             FIT = upper(Value) ;
                             paramSet(5) = true ;
@@ -939,9 +970,15 @@ function OUT = ESPRIT(Signal,varargin)
                         case 'DEBUG'
                             DEBUG = Value ;
                             paramSet(11) = true ;
+                        case 'CRITERION'
+                            CRITERION = Value ;
+                            paramSet(12) = true ;
                         case 'SOLVER'
                             SOLVER = Value ;
                             paramSet(13) = true ;
+                        case 'COMPUTE_U'
+                            COMPUTE_U = Value ;
+                            paramSet(14) = true ;
                         case 'M/L'
                             M_L = Value ;
                             paramSet(15) = true ;
@@ -954,6 +991,9 @@ function OUT = ESPRIT(Signal,varargin)
                         case 'SIGNAL_MODEL'
                             SIGNAL_MODEL = Value ;
                             paramSet(18) = true ;
+                        case 'COMPUTE_DU'
+                            COMPUTE_dU = Value ;
+                            paramSet(19) = true ;
                         otherwise
                             %errorInput(['Wrong argument name in n°',num2str(i),'.'])
                             errorInput([Name,' (n°',num2str(i),').'])
@@ -979,6 +1019,7 @@ function OUT = ESPRIT(Signal,varargin)
             if ~paramSet(16) ; W0 = [] ; end
             if ~paramSet(17) ; COMPUTE_dK = false ; end
             if ~paramSet(18) ; SIGNAL_MODEL = false ; end
+            if ~paramSet(19) ; COMPUTE_dU = false ; end
     end
 
 
@@ -1007,7 +1048,7 @@ function OUT = ESPRIT(Signal,varargin)
             end
         % Sort the poles
             if ~MAC % Simply sort by value
-                Kstab = sort(Kstab,2) ;
+                Kstab = sort(Kstab,2,'ascend') ;
             else % Sort with MACs
                 % Compute all Modes for all Mode Orders
                     Ustab = zeros(prod(Lp),length(R0),max(R0))*NaN*(1+1i) ; % dims : [Point order pole]
