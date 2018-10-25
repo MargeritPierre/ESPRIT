@@ -4,18 +4,18 @@
 
 % -----------------------------------------------------
     % DATA TO PROCESS
-        U = [AvgdX ; AvgdY ; AvgdZ] ; % Total Measurement Data [x,t]
+        U = Signal ; %[AvgdX ; AvgdY ; AvgdZ] ; % Total Measurement Data [x,t]
         indT = indT ; % Time indices used for ESPRIT
         OUT = OUT ; % ESPRIT results
-        Fe = Fe ; %Sampling Frequency
+        Fe = DATA.Fe ; %Sampling Frequency
         XLIM = [10 8000] ;
         
     % Plot a specific Criterion
         process =   { ...
                       ... 'sorting' ... % Sort by MAC values
                       ... 'stability' ... % Stability of the pole between successive orders
-                      ... 'complexity' ... % Measure out-of phase behavior
-                       'histogram' ... % Make an histogram
+                       'complexity' ... % Measure out-of phase behavior
+                      ... 'histogram' ... % Make an histogram
                     };
         vizualize = true ; % some tools with the mouse
     % Criterion parameters

@@ -19,8 +19,6 @@ DATA = load([path,file]) ;
         DATA.Lx = DATA.X0(end)-DATA.X0(1) ;
         DATA.Ly = DATA.Y0(end)-DATA.Y0(1) ;
         DATA.Lz = DATA.Z0(end)-DATA.Z0(1) ;
-        DATA.dx = DATA.Lx/(DATA.nX-1) ;
-        DATA.dy = DATA.Ly/(DATA.nY-1) ;
 %         DATA.X0 = reshape(DATA.X0,[DATA.nY DATA.nX])-min(DATA.X0(:)) ;
 %         DATA.Y0 = reshape(DATA.Y0,[DATA.nY DATA.nX])-min(DATA.Y0(:)) ;
 %         DATA.Z0 = reshape(DATA.Z0,[DATA.nY DATA.nX])-min(DATA.Z0(:)) ;
@@ -38,7 +36,7 @@ DATA = load([path,file]) ;
         end
     % Format the displacement
         if isfield(DATA,'Time')
-            DATA.U = reshape(permute(DATA.dZ,[2 1]),[DATA.nY DATA.nX DATA.nT]) ;
+            DATA.U = reshape(permute(DATA.dZ,[2 1 3]),[DATA.nY DATA.nX DATA.nT]) ;
             DATA.fftU = fft(DATA.U,[],3) ;
         elseif isfield(DATA,'Freq')
         elseif isfield(DATA,'CorrFreq')
@@ -102,55 +100,60 @@ DATA = load([path,file]) ;
 %% MODAL ANALYSIS
 
     % Create Signal
-        indT =  DATA.upEdg+100+(1:1000) ;
+        indT =  DATA.upEdg+1+(1:3000) ;
         Signal = [DATA.dZ].' ;
         Signal = Signal(:,indT) ;
         %Signal = Signal-mean(Signal(:)) ;
 
-    % Esprit Parameters
+    % Delete the stabdiag
+        delete(findobj(0,'tag','ESPRIT.StabDiag'))
 
     % APPLY ESPRIT
         OUT = ESPRIT(Signal ...
                         ,'DIMS_K', 2 ...
                         ,'SOLVER', 'eig' ...
-                        ,'CRITERION', 'ESTER' ...
+                        ,'CRITERION', 'ALL' ...
                         ,'CRIT_THRS', 1 ...
                         ,'COMPUTE_U', true ...
                         ,'SIGNAL_MODEL', true ...
-                        ,'COMPUTE_dK', false ...
+                        ,'COMPUTE_dK', true ...
+                        ,'COMPUTE_dU', true ...
                         ,'FUNC', 'exp' ...
-                        ,'R0', 2:2:100 ...
-                        ,'M/L', 2/3 ...
+                        ,'R0',32 ...2:2:100 ...
+                        ,'M/L', 1/2 ...
                         ,'W0', [] ...
                         ,'FIT', 'TLS' ...
-                        ,'DECIM', [1 10] ...
+                        ,'DECIM', [100 1] ...
                         ,'SHIFTS', [1]' ...
                         ,'DEBUG', true ...
                         ,'STABILDIAG', true ...
-                        ,'MAC',.1 ...
+                        ,'MAC',eps ...
                         ) 
         OUT.K = OUT.K*DATA.Fe/2/pi ;
         OUT.dK = OUT.dK*DATA.Fe/2/pi ;
                     
     % RESULTS
         clf ;
-            % Measurements
-                DATA.meanfftU = squeeze(sqrt(mean(mean(abs(DATA.fftU).^2,1),2))) ;
-                plot(DATA.f,DATA.meanfftU,'k','linewidth',1)
-            % Signal Model
-                fModel = (0:length(indT)-1)/length(indT)*DATA.Fe ;
-                plot(fModel,sqrt(mean(abs(fft(OUT.SignalModel,[],2).^2),1)),':r')
-            % Formatting
-                set(gca,'xscale','log','yscale','log')
-                set(gca,'xlim',[1/DATA.nF 1/2]*DATA.Fe)
-                grid on
-            % Identified Parameters
-                set(gca,'colororderindex',1) ;
-                set(gca,'colororder',linspecer(length(OUT.K))*.5) ;
-                plot([1;1]*real(OUT.K),get(gca,'ylim').','linewidth',1)
+        % Measurements
+            DATA.meanfftU = squeeze(sqrt(mean(mean(abs(DATA.fftU).^2,1),2))) ;
+            plot(DATA.f,DATA.meanfftU,'k','linewidth',1)
+        % Signal Model
+            fModel = (0:length(indT)-1)/length(indT)*DATA.Fe ;
+            plot(fModel,sqrt(mean(abs(fft(Signal,[],2).^2),1)),'k')
+            plot(fModel,sqrt(mean(abs(fft(OUT.SignalModel,[],2).^2),1)),':r')
+        % Formatting
+            set(gca,'xscale','log','yscale','log')
+            set(gca,'xlim',[1/DATA.nF 1/2]*DATA.Fe)
+            grid on
+        % Identified Parameters
+            set(gca,'colororderindex',1) ;
+            set(gca,'colororder',linspecer(length(OUT.K))*.5) ;
+            plot([1;1]*real(OUT.K),get(gca,'ylim').','linewidth',1)
+            if ~isempty(OUT.dK)
                 set(gca,'colororderindex',1) ;
                 plot([1;1]*real(OUT.K+OUT.dK),get(gca,'ylim').','-.','linewidth',1)
                 plot([1;1]*real(OUT.K-OUT.dK),get(gca,'ylim').','-.','linewidth',1)
+            end
 
 
 

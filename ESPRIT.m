@@ -216,8 +216,10 @@ function OUT = ESPRIT(Signal,varargin)
                 transpCss = false ; % Css = H*H' , [W,lambda] = eig(Css)
                 Css = buildCss() ;
             else
-                transpCss = true ; % Css = H'*H , [Wr,lambda] = eig(Css), W = H*W\diag(sqrt(lambda)) , 
+                transpCss = true ; % Css = H'*H , [Wr,lambda] = eig(Css), W = H*W\diag(sqrt(lambda)) ,
+                if(DEBUG) ; display('        transpCss: build Hss') ; end
                 Hss = buildHss(Signal) ;
+                if(DEBUG) ; display('         ... and Css = Hss''*Hss') ; end
                 Css = Hss'*Hss ;
             end
         
@@ -245,14 +247,15 @@ function OUT = ESPRIT(Signal,varargin)
         [~,Ind] = sort(lambda,'descend') ;
         lambda = lambda(Ind) ;
         W = W(:,Ind) ;
-    % KEEP the needed E.V only
-        lambda = lambda(1:max(R0)) ;
-        W = W(:,1:max(R0)) ;
     % GET THE LEFT EIGENVECTORS
         if transpCss
+            if(DEBUG) ; display('        transpCss: compute left eig.vec') ; end
             W = Hss*W ;
             W = bsxfun(@(w,l)w./l, W, sqrt(lambda(:)).') ;
         end
+    % KEEP the needed E.V only
+        lambda = lambda(1:max(R0)) ;
+        W = W(:,1:max(R0)) ;
         
         
 % SIGNAL ORGER CRITERION
@@ -296,7 +299,7 @@ function OUT = ESPRIT(Signal,varargin)
     
         
 % STABILIZATION DIAGRAM
-    if STABILDIAG
+    if STABILDIAG && length(R0)>1
         Kstab = [] ;
         Ustab = [] ;
         MAC ;
@@ -306,8 +309,10 @@ function OUT = ESPRIT(Signal,varargin)
         
     
 % EXTRACT THE WAVEVECTORS
-    if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Pole Estimation : ') ; lastTime = tic ; end
-    [T,beta] = extractPoles(R) ;
+    if ~STABILDIAG || COMPUTE_dK
+        if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Pole Estimation : ') ; lastTime = tic ; end
+        [T,~] = extractPoles(R) ;
+    end
         
     
 % ESTIMATE AMPLITUDES
@@ -380,7 +385,7 @@ function OUT = ESPRIT(Signal,varargin)
             OUT.SAMOS = SAMOS ;
         end
     % Stabilization Diagram 
-        if STABILDIAG
+        if STABILDIAG && length(R0)>1
             OUT.Kstab = Kstab ;
             OUT.Ustab = Ustab ;
         end
@@ -622,6 +627,12 @@ function OUT = ESPRIT(Signal,varargin)
                 case 'TLS'
                     [E,~] = svd([Wup' ; Wdwn']*[Wup Wdwn],0) ;
                     F = -E(1:R0(r),R0(r)+(1:R0(r)))/E(R0(r)+(1:R0(r)),R0(r)+(1:R0(r))) ;
+                case 'TLS2'
+                    L_2 = floor(Lk./2) ;
+                    Wup = Wp(1:2:L_2*2,:) ;
+                    Wdwn = Wp(2:2:L_2*2,:) ;
+                    [E,~] = svd([Wup' ; Wdwn']*[Wup Wdwn],0) ;
+                    F = -E(1:R0(r),R0(r)+(1:R0(r)))/E(R0(r)+(1:R0(r)),R0(r)+(1:R0(r))) ;
             end
     end
 
@@ -637,7 +648,7 @@ function OUT = ESPRIT(Signal,varargin)
     function err = samos(r,s)
         [Wup,Wdwn] = computeF(r,s) ;
         S = [Wup Wdwn] ;
-        g = sort(sqrt(eig(S'*S,'vector'))) ;
+        g = real(sort(sqrt(eig(S'*S,'vector')))) ;
         %g = flip(svd(S)) ;
         E = sum(g(1:R0(r)))/R0(r) ;
         err = 1/E ;
@@ -750,8 +761,8 @@ function OUT = ESPRIT(Signal,varargin)
                             ... 'kron'...
                             ... 'none'...  
                         ;
-            covar_estim =    'uniform' ... % Estimation of the perturbation covariance: 
-                            ... 'diagonal' ...
+            covar_estim =   ... 'uniform' ... % Estimation of the perturbation covariance: 
+                             'diagonal' ...
                             ... 'full' ...
                             ;
             formulation =   ... 'analytic' ... % with Vandermonde matrices etc. Do not work with cosinuses
@@ -760,6 +771,7 @@ function OUT = ESPRIT(Signal,varargin)
         % SIGNAL PERTURBATION AND COVARIANCE
             if isempty(SignalModel) ; computeSignalModel() ; end
             if ~strcmp(lin_method,'none') && strcmp(estimate,'std') % standard deviation estimation: std
+                if(DEBUG) ; display('        data covariance') ; end
                 switch covar_estim
                     case 'uniform'
                         var_dS = var(dS(:),0); % scalar
@@ -772,11 +784,14 @@ function OUT = ESPRIT(Signal,varargin)
             end
         % WAVEVECTOR PERTURBATION
             if COMPUTE_dK
+                if(DEBUG) ; display('        wavevector uncertainties') ; end
                 % Perturbed HbH matrix if needed
                     if strcmp(lin_method,'none') || strcmp(estimate,'delta')
+                        if(DEBUG) ; display('             dHss') ; end
                         dH = buildHss(dS) ;
                     end
                 % Selection matrices if needed
+                    if(DEBUG) ; display('             selection matrices') ; end
                     switch lin_method
                         case 'kron'
                             % M Matrix
@@ -802,6 +817,7 @@ function OUT = ESPRIT(Signal,varargin)
                 % Pre-Computations
                     shifts = eye(length(DIMS_K)) ; % /!\ SHIFTS IS DEFAULT HERE !
                     % Right vector of the bilinear form
+                        if(DEBUG) ; display('             right eigenvectors of Css') ; end
                         switch formulation
                             case 'analytic'
                                 % Partial Vandermonde matrices
@@ -821,6 +837,7 @@ function OUT = ESPRIT(Signal,varargin)
                 % INITIALIZATION
                     dK = zeros(size(K)) ;
                 % Loop over the shifts
+                    if(DEBUG) ; display('             uncertainties') ; end
                     for s = 1:size(K,1)
                         [~,~,~,Jup,Jdwn] = selectMatrices(shifts(s,:)) ;
                         % pre-compute
@@ -870,7 +887,7 @@ function OUT = ESPRIT(Signal,varargin)
                                                 end
                                                 dK(s,r) = dK(s,r)/abs(Arn) ;
                                             case 'delta'
-                                                dK(s,r) = abs(abs(zn')*dS(:)/Arn) ;
+                                                dK(s,r) = abs((zn')*dS(:)/Arn) ;
                                         end
                                     end
                                 % Common terms
@@ -880,8 +897,11 @@ function OUT = ESPRIT(Signal,varargin)
             end
         % AMPLITUDES PERTURBATION
             if COMPUTE_dU
+                if DIMS_K>1 || any(isCOS(:)) ; dU = NaN*ones(size(U)) ; return ; end
+                if(DEBUG) ; display('        amplitudes uncertainty') ; end
                 if isempty(V) ; buildVandermonde(Lk) ; end
                 % Pre-compute the inverse of V
+                    if(DEBUG) ; display('             inverse of V') ; end
                     invV = V\eye(prod(Lk)) ;
                 % Uncertainty
                     switch estimate
@@ -899,11 +919,14 @@ function OUT = ESPRIT(Signal,varargin)
                                             dU(r,n) = sqrt(zrn'*var_dS*zrn) ;
                                     end
                                 end
+                                dU = dU*2 ; % Yes, I don't know why this factor 2...
                             end
                         case 'delta'
-                            dU = abs(invV*dS') ;
+                            dV = bsxfun(@times,(0:Lk-1)',V)*diag(dK(1,:)) ;
+                            dU = abs(abs(invV)*(dS.' + abs(dV)*U.'));
                     end
-                dU = dU*2 ;
+                % Final Processing
+                    dU = reshape(dU.',[Lp , size(K,2)]) ;
             end
     end
 
@@ -1034,7 +1057,7 @@ function OUT = ESPRIT(Signal,varargin)
     
 
 % ===================================================================================================================    
-% GRAPHICAL FUNCTIONS
+% STABILIZATION DIAGRAM
 % ===================================================================================================================
 
 % PLOT THE STABILIZATION DIAGRAM
@@ -1042,78 +1065,119 @@ function OUT = ESPRIT(Signal,varargin)
         if length(DIMS_K)>1 ; warning('Stabilization Diagram is available for 1D-ESPRIT only.') ; return ; end
         % Compute All the Poles for All Signal Orders
             Kstab = zeros(length(R0),max(R0))*NaN*(1+1i) ;
+            Ustab = zeros(prod(Lp),length(R0),max(R0))*NaN*(1+1i) ;
             for r = 1:length(R0)
                 extractPoles(r) ; 
                 Kstab(r,1:R0(r)) = K ;
             end
+            K = Kstab(R,1:R0(R)) ;
         % Sort the poles
-            if ~MAC % Simply sort by value
-                Kstab = sort(Kstab,2,'ascend') ;
-            else % Sort with MACs
-                % Compute all Modes for all Mode Orders
-                    Ustab = zeros(prod(Lp),length(R0),max(R0))*NaN*(1+1i) ; % dims : [Point order pole]
-                    wtbr = waitbar(0,'Computing Modes...') ;
-                    for r = 1:length(R0)
-                        K = Kstab(r,1:R0(r)) ;
-                        V = [] ; computeU ; V = [] ;
-                        Ustab(:,r,1:R0(r)) = reshape(U,[prod(Lp),R0(r)]) ;
-                        wtbr = waitbar(r/length(R0),wtbr) ;
-                    end
-                    delete(wtbr) ; drawnow ;
-                % Compute MAC Values
-                    K_MAClinks = [] ;
-                    OR_MAClinks = [] ;
-                    for or = length(R0)-1:-1:1 ;
-                        U1 = squeeze(Ustab(:,or+1,1:R0(or+1))) ;
-                        U2 = squeeze(Ustab(:,or,1:R0(or))) ;
-                        mac = abs(U2'*U1)./sqrt(sum(abs(U2).^2,1)'*sum(abs(U1).^2,1)) ;
-                        for rr = 1:or
-                            maxMAC = max(mac(:)) ;
-                            if maxMAC<MAC ; break ; end
-                            [rmax,cmax] = find(mac==maxMAC) ;
-                            K_MAClinks = [K_MAClinks ; [Kstab(or+1,cmax(1)) Kstab(or,rmax(1))]] ;
-                            OR_MAClinks = [OR_MAClinks ; [or+1 or]] ;
-                            mac(:,cmax(1)) = nan ;
-                            mac(rmax(1),:) = nan ;
-                        end
-                    end
+            Kstab = sort(Kstab,2,'ascend') ; % Simply sort by value
+        % Initialize the stabilization diagram
+            stab = InitStabDiag() ;
+        % SORT WITH MAC VALUES
+            if MAC % Sort with MACs
+                stab = SortStabDiag(stab) ;
             end
         % Backup the current poles choice
-            K = Kstab(R,1:R) ;
-        % Figure
-            stab.fig = figure('NumberTitle','off','Name','ESPRIT : STABILIZATION DIAGRAM. Click to select an other signal order. Right Click to quit.') ; %figure ;
-            % Axes for the signal order selection Criterion(s)
-                stab.axCrit = axes('outerposition',[0 0 .2 1]) ;
-                    % Plot ALL Criterions
-                        plot(R0,log10(CRIT),'.-','markersize',20,'linewidth',1) ;
-                        plot(R0,log10(ESTER),'.-','markersize',20,'linewidth',1) ;
-                        plot(R0,log10(SAMOS),'.-','markersize',20,'linewidth',1) ;
-                    % Format the axes
-                        set(gca,'view',[-90 90]) ;
-                        box on
-                        grid on
-                        axis tight
-                        stab.axCrit.XLim = [min(R0) max(R0)] ;
-                    % Cursors
-                        stab.plOrderLine = plot(stab.axCrit,R0(R)*[1 1],stab.axCrit.YLim,'-.k','linewidth',1) ;
-                        stab.plRLine = plot(stab.axCrit,R0(R)*[1 1],stab.axCrit.YLim,'-.r','linewidth',1) ;
-                    % Disable rotate3d
-                        hBehavior = hggetbehavior(stab.axCrit, 'Rotate3d');
-                        hBehavior.Enable = false ;
-            % Axes for the Poles
-                stab.axPoles = axes('outerposition',[.2 0 .8 1]) ;
-                    if MAC ; plot3(abs(real(K_MAClinks')),OR_MAClinks',abs(imag(K_MAClinks')./real(K_MAClinks')),'-k','linewidth',.5) ; end
-                    plot3(abs(real(Kstab)),repmat(R0(:),[1 max(R0)]),abs(imag(Kstab)./real(Kstab)),'+','markersize',10,'linewidth',.5)
-                    stab.axPoles.ZScale = 'log' ;
-                    stab.axPoles.SortMethod = 'childorder' ;
-                stab.axMean = axes('position',stab.axPoles.Position) ;
-                    meanFFTSignal = Signal ;
-                    meanFFTSignal = fft(meanFFTSignal,[],2) ;
-                    meanFFTSignal = abs(meanFFTSignal) ;
-                    meanFFTSignal = mean(meanFFTSignal,1) ;
-                    plot((0:prod(Lk)-1)/prod(Lk)*2*pi,log10(meanFFTSignal),'k') ;
-                    axis off
-                    box on
+            K = Kstab(R,1:R0(R)) ;
+        % Init interactions
+            stab = InitModeShape(stab) ;
+            stab = InitStabDiagInteract(stab) ;
+        % Wait for the figure to be closed
+            uiwait(stab.fig) ;
+            drawnow ;
+    end
+
+
+% FOLLOW MODES WITH MAC VALUES
+    function stab = SortStabDiag(stab)    
+        % Initialize
+            Ustab = ones(prod(Lp),length(R0),max(R0))*NaN*(1+1i) ; % dims : [Point order pole]
+            stab.branches = plot3(stab.axPoles,...
+                                    NaN*ones(length(R0),max(R0)),...
+                                    NaN*ones(length(R0),max(R0)),...
+                                    NaN*ones(length(R0),max(R0)),...
+                                    '-k','linewidth',.5) ;
+            uistack(stab.branches,'bottom') ;
+            set(stab.branches,'color',[1 1 1]*.5) ;
+        % Process Data
+            for r = 1:length(R0)
+                % Compute the mode
+                    K = Kstab(r,1:R0(r)) ;
+                    V = [] ; computeU ; V = [] ;
+                    Ustab(:,r,1:R0(r)) = reshape(U,[prod(Lp),R0(r)]) ;
+                % Not the first mode ?
+                    if r>1
+                        % Compute the MAC matrix
+                            U1 = squeeze(Ustab(:,r-1,1:R0(r-1))) ;
+                            U2 = squeeze(Ustab(:,r,1:R0(r))) ;
+                            mac = abs(U2'*U1)./sqrt(sum(abs(U2).^2,1)'*sum(abs(U1).^2,1)) ;
+                        % Sort the parameters
+                            indices = NaN*ones(1,R0(r-1)) ;
+                            % Loop
+                                for rr = 1:R0(r-1)
+                                    % Get the max. Value
+                                        maxMAC = max(mac(:)) ;
+                                        if maxMAC<MAC ; break ; end
+                                        [rmax,cmax] = find(mac==maxMAC) ;
+                                    % Set the corresponding mac values to NaN
+                                        mac(:,cmax(1)) = nan ;
+                                        mac(rmax(1),:) = nan ;
+                                    % Save to the indices vector
+                                        indices(cmax(1))=rmax(1) ;
+                                    % Break if all modes have been classified
+                                        if ~any(~isnan(mac(:))) ; break ; end
+                                end
+                            % Remaining non-sorted indices
+                                indices = indices(~isnan(indices)) ;
+                                indices = [indices setdiff(1:R0(r),indices)] ;
+                            % Rearrange
+                                Kstab(r,1:R0(r)) = Kstab(r,indices) ;
+                                Ustab(:,r,1:R0(r)) = Ustab(:,r,indices) ;
+                    end
+                % Update Plot
+                    for br = 1:R0(r)
+                        stab.branches(br).XData(1:r) = abs(real(Kstab(1:r,br))) ;
+                        stab.branches(br).YData(1:r) = R0(1:r) ;
+                        stab.branches(br).ZData(1:r) = abs(imag(Kstab(1:r,br))./real(Kstab(1:r,br))) ;
+                    end
+                    drawnow ;
+            end
+    end
+    
+
+
+% STABILIZATION DIAGRAM INITIALIZATION
+    function stab = InitStabDiag()
+        % Figure init
+            relSize = .85 ;
+            stab.fig = figure(...
+                            'NumberTitle','off'...
+                            ,'Name','ESPRIT : STABILIZATION DIAGRAM. Click to select an other signal order. Right Click to quit.'...
+                            ,'tag','ESPRIT.StabDiag' ...
+                            ) ;
+            %if DEBUG ; stab.fig.WindowStyle = 'docked' ; end
+            stab.fig.Position(1:2) = stab.fig.Position(1:2) + stab.fig.Position(3:4)*(1-relSize)/2 ;
+            stab.fig.Position(3:4) = stab.fig.Position(3:4)*relSize ;
+        % Axes for the Poles
+            stab.axPoles = axes('outerposition',[.2 0 .8 1]) ;
+                plot3(abs(real(Kstab)),repmat(R0(:),[1 max(R0)]),abs(imag(Kstab)./real(Kstab)),'.k','markersize',10,'linewidth',.5)
+                stab.axPoles.ZScale = 'log' ;
+                stab.axPoles.SortMethod = 'childorder' ;
+                % Format
+                    stab.axPoles.YTickLabel = []; 
+                    stab.axPoles.YMinorTick = 'on'; 
+                    %stab.axPoles.YMinorGrid = 'on'; 
+                    grid(stab.axPoles,'on') ;
+            stab.axMean = axes('position',stab.axPoles.Position) ;
+                meanFFTSignal = Signal ;
+                meanFFTSignal = fft(meanFFTSignal,[],2) ;
+                meanFFTSignal = abs(meanFFTSignal) ;
+                meanFFTSignal = mean(meanFFTSignal,1) ;
+                plot((0:prod(Lk)-1)/prod(Lk)*2*pi,log10(meanFFTSignal),'k') ;
+                axis off
+                box on
             % Link axes
                 set([stab.axMean stab.axPoles],'xscale','log')
                 % Limits
@@ -1124,57 +1188,206 @@ function OUT = ESPRIT(Signal,varargin)
                 global hlink , hlink = linkprop([stab.axMean stab.axPoles],'position') ;
                 linkaxes([stab.axMean stab.axPoles],'x') ;
                 uistack(stab.axMean,'bottom') ;
-            % Poles Chosen at the end
-                stab.plRPoles = plot3(stab.axPoles,abs(real(Kstab(R,:))),R0(R)*ones(1,max(R0)),abs(imag(Kstab(R,:))./real(Kstab(R,:))),'or','markersize',15,'linewidth',1.5) ;
-            % Poles at the mouse position
-                stab.plOrderPoles = plot3(stab.axPoles,abs(real(Kstab(R,:))),R0(R)*ones(1,max(R0)),abs(imag(Kstab(R,:))./real(Kstab(R,:))),'.k','markersize',30) ;
-            % Figure Callbacks setting
-                stab.fig.WindowButtonMotionFcn = @(src,evt)changeStabDiagOrder(Kstab,stab,'move') ;
-                stab.fig.WindowButtonDownFcn = @(src,evt)changeStabDiagOrder(Kstab,stab,'click') ;
-            % Buttons for the view
+        % Axes for the signal order selection Criterion(s)
+            stab.axCrit = axes('outerposition',[0 0 .2 1]) ;
+                % Plot ALL Criterions
+                    %plot(R0,(CRIT./max(CRIT)),'.-','markersize',20,'linewidth',1) ;
+                    plot(R0,(MDL./max(MDL)),'.-','markersize',20,'linewidth',1) ;
+                    plot(R0,(ESTER./max(ESTER)),'.-','markersize',20,'linewidth',1) ;
+                    plot(R0,(SAMOS./max(SAMOS)),'.-','markersize',20,'linewidth',1) ;
+                % Format the axes
+                    set(gca,'view',[-90 90]) ;
+                    box on
+                    grid on
+                    axis tight
+                    stab.axCrit.XLim = [min(R0) max(R0)] ;
+                % Cursors
+                    stab.plOrderLine = plot(stab.axCrit,R0(R)*[1 1],stab.axCrit.YLim,'-.k','linewidth',1) ;
+                    stab.plRLine = plot(stab.axCrit,R0(R)*[1 1],stab.axCrit.YLim,'-.r','linewidth',1) ;
+                % Disable rotate3d
+                    hBehavior = hggetbehavior(stab.axCrit,'Rotate3d');
+                    hBehavior.Enable = false ;
+                % Legend
+                    legend({'MDL','ESTER','SAMOS'},'edgecolor','k','location','northwest') ;
+                % Re-align with the poles axes
+                    stab.axCrit.Position([2,4]) = stab.axPoles.Position([2,4]) ;
+        % Poles Chosen at the end
+            stab.plRPoles = plot3(stab.axPoles,abs(real(K)),R0(R)*ones(1,R0(R)),abs(imag(K)./real(K)),'or','markersize',15,'linewidth',1.5) ;
+        % Poles at the mouse position
+            stab.plOrderPoles = plot3(stab.axPoles,abs(real(K)),R0(R)*ones(1,R0(R)),abs(imag(K)./real(K)),'.m','markersize',25) ;
+        % DRAW
+            drawnow ;
+    end
+
+
+% MODE SHAPE PLOT
+    function stab = InitModeShape(stab) 
+        % Prepare the axes
+            stab.axShape = axes() ;
+            stab.axShape.Position(1:2) = stab.axPoles.Position(1:2) ;
+            stab.axShape.Position(3:4) = [.2 .2] ;
+            stab.axShape.XTick = [] ;
+            stab.axShape.YTick = [] ;
+            stab.axShape.XLim = [-1 1] ;
+            stab.axShape.YLim = [-1 1] ;
+            axis(stab.axShape,'equal') ;
+            box(stab.axShape,'on') ;
+        % Prepare the plot
+            stab.plotShape = plot(stab.axShape,NaN,NaN,'+b','linewidth',.5,'markersize',8) ;
+            stab.markShape = plot(stab.axPoles,NaN,NaN,'+b','linewidth',2,'markersize',15) ;
+    end
+
+
+% INITIALIZE THE SAB DIAG INTERACTION
+    function stab = InitStabDiagInteract(stab)
+        % Buttons for the view
+            margin = 0.003 ;
+            btnWidth = 0.08 ;
+            btnHeight = 0.03 ;
+            % Frequency/damping switch
                 stab.btnSwitch = uicontrol(stab.fig,'style','pushbutton') ;
                 stab.btnSwitch.String = 'Frequency' ;
                 stab.btnSwitch.TooltipString = 'Switch Representation Mode' ;
                 stab.btnSwitch.Units = 'normalized' ;
-                margin = 0.003 ;
-                btnWidth = 0.08 ;
-                btnHeight = 0.03 ;
-                stab.btnSwitch.Position = [1-btnWidth-margin 1-btnHeight-margin btnWidth btnHeight] ;
+                stab.btnSwitch.Position = [stab.axPoles.Position(1:2)+stab.axPoles.Position(3)*[1 0]+[-btnWidth-margin btnHeight+margin] [btnWidth btnHeight]] ;
                 stab.btnSwitch.Callback = @(src,evt)btnSwitchCallback(stab) ;
-            % Wait for the figure to be closed
-                uiwait(stab.fig) ;
-                drawnow ;
+            % Listbox choose selection mode
+                stab.popupSelect = uicontrol(stab.fig,'style','popupmenu') ;
+                stab.popupSelect.String = {'Full','One'} ;
+                stab.popupSelect.TooltipString = 'Pole Selection' ;
+                stab.popupSelect.Units = 'normalized' ;
+                stab.popupSelect.Position = [stab.axPoles.Position(1:2)+stab.axPoles.Position(3)*[1 0]+[-2*btnWidth-2*margin btnHeight+margin] [btnWidth btnHeight]] ;
+                stab.popupSelect.Callback = @(src,evt)popupSelectCallback(stab) ;
+            % Listbox Criterion plot
+                stab.popupCriterion = uicontrol(stab.fig,'style','popupmenu') ;
+                stab.popupCriterion.String = {'None','Complexity'} ;
+                stab.popupCriterion.TooltipString = 'Show a criterion' ;
+                stab.popupCriterion.Units = 'normalized' ;
+                stab.popupCriterion.Position = [stab.axPoles.Position(1:2)+stab.axPoles.Position(3)*[1 0]+[-3*btnWidth-3*margin btnHeight+margin] [btnWidth btnHeight]] ;
+                stab.popupCriterion.Callback = @(src,evt)popupCriterionCallback(stab) ;
+        % Figure Callbacks setting
+            stab.fig.WindowButtonMotionFcn = @(src,evt)changeStabDiagOrder(Kstab,stab,'move') ;
+            stab.fig.WindowButtonDownFcn = @(src,evt)changeStabDiagOrder(Kstab,stab,'click') ;
     end
 
 % CHANGE THE STABILIZATION DIAGRAM ORDER WITH MOUSE POSITION
     function changeStabDiagOrder(Kstab,stab,event)
         % Get the order given by the mouse position
+            mouseK = stab.axPoles.CurrentPoint(1,1) ;
             mouseOrder = stab.axCrit.CurrentPoint(1,1) ;
             selectOrder = min(max(R0(1),round(mouseOrder)),R0(end)) ;
+        % Get the pole
             [~,order] = min(abs(R0-selectOrder)) ;
-            order = order(1) ;
-        % Retrieve identified poles
-            stab.plOrderLine.XData = R0(order)*[1 1] ;
-            stab.plOrderPoles.XData = abs(real(Kstab(order,:))) ;
-            stab.plOrderPoles.YData = R0(order)*ones(1,max(R0(:))) ;
-            stab.plOrderPoles.ZData = abs(imag(Kstab(order,:))./real(Kstab(order,:))) ;
-        % If Clicked, change the final output poles
-            switch event
-                case 'move'
-                case 'click'
-                    R = order ;
-                    K = Kstab(R,1:R) ;
-                    stab.plRLine.XData = R0(order)*[1 1] ;
-                    stab.plRPoles.XData = abs(real(Kstab(order,:))) ;
-                    stab.plRPoles.YData = R0(order)*ones(1,max(R0(:))) ;
-                    stab.plRPoles.ZData = abs(imag(Kstab(order,:))./real(Kstab(order,:))) ;
+            kk = abs(real(Kstab(order,:))) ;
+            [~,numPole] = min(abs(kk-mouseK)) ;
+        % Do something
+        switch event % MOUSE MOVED OR CLICKED
+            case 'move' % ONLY DISPLAY
+                % Process the mode shape
+                    uu = Ustab(:,order,numPole) ;
+                    uu = uu./max(abs(uu(:))) ;
+                % Plot the mode shape
+                    stab.plotShape.XData = real(uu) ;
+                    stab.plotShape.YData = imag(uu) ;
+                    stab.markShape.XData = abs(real(Kstab(order,numPole))) ;
+                    stab.markShape.YData = R0(order) ;
+                    stab.markShape.ZData = abs(imag(Kstab(order,numPole))./real(Kstab(order,numPole))) ;
+                % Order cursor
+                    stab.plOrderLine.XData = R0(order)*[1 1] ;
+                    stab.plOrderPoles.XData = abs(real(Kstab(order,:))) ;
+                    stab.plOrderPoles.YData = R0(order)*ones(1,max(R0)) ;
+                    stab.plOrderPoles.ZData = abs(imag(Kstab(order,:))./real(Kstab(order,:))) ;
+            case 'click' % CHANGE THE CHOOSEN POLES
+                switch stab.fig.SelectionType % Mode of selection
+                    case 'normal' % ADD THE CORRRESPONDING POLES
+                        % Depending on the selection mode...
+                            switch stab.popupSelect.String{stab.popupSelect.Value}
+                                case 'Full'
+                                    R = order ;
+                                    K = Kstab(R,1:R0(R)) ;
+                                    stab.plRPoles.XData = abs(real(K)) ;
+                                    stab.plRPoles.YData = R0(order)*ones(1,R0(R)) ;
+                                    stab.plRPoles.ZData = abs(imag(K)./real(K)) ;
+                                case 'One'
+                                    % Has the pole already been selected ?
+                                        ind = find(abs(abs(real(K))-abs(real(Kstab(order,numPole))))<eps) ;
+                                        switch isempty(ind)
+                                            case true % The pole is new: add it
+                                                if DEBUG ; disp(['Add K: ',num2str(Kstab(order,numPole),3)]) ; end
+                                                if ~isreal(Signal) % The signal is complex
+                                                    K(end+1) = Kstab(order,numPole) ;
+                                                    stab.plRPoles.YData(end+1) = R0(order) ;
+                                                else % The signal is real, add the conjugate pole
+                                                    K(end+(1:2)) = [Kstab(order,numPole),-conj(Kstab(order,numPole))] ;
+                                                    stab.plRPoles.YData(end+(1:2)) = R0(order)*[1 1] ;
+                                                end 
+                                            case false % The pole has to be removed
+                                                if DEBUG ; disp(['Rem K: ',num2str(Kstab(order,numPole),3)]) ; end
+                                                K(ind) = [] ;
+                                                stab.plRPoles.YData(ind) = [] ;
+                                        end
+                                    % Update the markers
+                                        stab.plRPoles.XData = abs(real(K)) ;
+                                        stab.plRPoles.ZData = abs(imag(K)./real(K)) ;
+                            end
+                        % Update markers
+                            stab.plRLine.XData = R0(order)*[1 1] ;
+                        % DISPLAY INFOS
+                            if DEBUG ; disp(['K: ',mat2str(K,2)]) ; end
+                    case 'open' % NO ACTION
+                    case 'alt' % RIGHT-CLICK, CLOSE THE STAB. DIAG.
+                        close(stab.fig) ;
+                end
+        end
+    end
+
+% CHANGE PLOT CRITERION
+    function popupCriterionCallback(stab)
+        % Delete any preovious criterion
+            delete(findobj(stab.axPoles,'tag','scatCriterion')) ;
+            delete(findobj(stab.fig,'type','colorbar')) ;
+        % Compute the criterion
+            complex = NaN*ones(size(Kstab)) ;
+            switch stab.popupCriterion.String{stab.popupCriterion.Value}
+                case 'None' % No Criterion
+                case 'Complexity' % Evaluate the complexity
+                    for or = 1:size(Kstab,1) 
+                        for rr = 1:size(Kstab,2) ;
+                            if isnan(Kstab(or,rr)) ; continue; end
+                            uu = Ustab(:,or,rr) ;
+                            S = [real(uu(:)) imag(uu(:))] ;
+                            g = real(eig(S'*S)) ;
+                            crit(or,rr) = min(g)/max(g) ;
+                        end
+                    end
             end
-        % Close the figure if double clicked
-            switch stab.fig.SelectionType
-                case 'open'
-                case 'alt'
-                    close(stab.fig) ;
+        % Scatter plot
+            if ~strcmp('None',stab.popupCriterion.String{stab.popupCriterion.Value})
+                scatter3(stab.axPoles,...
+                        abs(real(Kstab(:))),...
+                        repmat(R0(:),[size(Kstab,2),1]),...
+                        abs(imag(Kstab(:))./real(Kstab(:))),...
+                        50,...
+                        crit(:),...
+                        'filled',...
+                        'tag','scatCriterion') ;
+                colorbar(stab.axPoles) ;
             end
+    end
+
+% CHANGE SELECTION MODE
+    function popupSelectCallback(stab)
+        % Initialize the choice of K
+            switch stab.popupSelect.String{stab.popupSelect.Value}
+                case 'Full' % Select the full order
+                    K = Kstab(R,1:R0(R)) ;
+                    stab.plRPoles.YData = R0(R)*ones(1,R0(R)) ;
+                case 'One' % Select poles one by one
+            end
+        % Initialize cursors
+            stab.plRLine.XData = R0(R)*[1 1] ;
+            stab.plRPoles.XData = abs(real(K)) ;
+            stab.plRPoles.ZData = abs(imag(K)./real(K)) ;
     end
 
 % CHANGE STABIL. DIAGRAM ROTATION
