@@ -1078,6 +1078,7 @@ function OUT = ESPRIT(Signal,varargin)
         % SORT WITH MAC VALUES
             if MAC % Sort with MACs
                 stab = SortStabDiag(stab) ;
+                V = [] ;
             end
         % Backup the current poles choice
             K = Kstab(R,1:R0(R)) ;
@@ -1093,7 +1094,8 @@ function OUT = ESPRIT(Signal,varargin)
 % FOLLOW MODES WITH MAC VALUES
     function stab = SortStabDiag(stab)    
         % Initialize
-            Ustab = ones(prod(Lp),length(R0),max(R0))*NaN*(1+1i) ; % dims : [Point order pole]
+            %Ustab = ones(prod(Lp),length(R0),max(R0))*NaN*(1+1i) ; % dims : [Point order pole]
+            Ustab = ones(length(indP),length(R0),max(R0))*NaN*(1+1i) ; % dims : [Point order pole]
             stab.branches = plot3(stab.axPoles,...
                                     NaN*ones(length(R0),max(R0)),...
                                     NaN*ones(length(R0),max(R0)),...
@@ -1105,8 +1107,8 @@ function OUT = ESPRIT(Signal,varargin)
             for r = 1:length(R0)
                 % Compute the mode
                     K = Kstab(r,1:R0(r)) ;
-                    V = [] ; computeU ; V = [] ;
-                    Ustab(:,r,1:R0(r)) = reshape(U,[prod(Lp),R0(r)]) ;
+                    buildVandermonde(Lk) ;
+                    Ustab(:,r,1:R0(r)) = (V\Signal(indP,:).').' ;
                 % Not the first mode ?
                     if r>1
                         % Compute the MAC matrix
@@ -1142,6 +1144,10 @@ function OUT = ESPRIT(Signal,varargin)
                         stab.branches(br).YData(1:r) = R0(1:r) ;
                         stab.branches(br).ZData(1:r) = abs(imag(Kstab(1:r,br))./real(Kstab(1:r,br))) ;
                     end
+                % Update the sorted scatter plot
+                    stab.scatCriterion.XData = abs(real(Kstab(:))) ;
+                    stab.scatCriterion.ZData = abs(imag(Kstab(:))./real(Kstab(:))) ;
+                % Draw
                     drawnow ;
             end
     end
@@ -1162,7 +1168,15 @@ function OUT = ESPRIT(Signal,varargin)
             stab.fig.Position(3:4) = stab.fig.Position(3:4)*relSize ;
         % Axes for the Poles
             stab.axPoles = axes('outerposition',[.2 0 .8 1]) ;
-                plot3(abs(real(Kstab)),repmat(R0(:),[1 max(R0)]),abs(imag(Kstab)./real(Kstab)),'.k','markersize',10,'linewidth',.5)
+                stab.scatCriterion = scatter3(stab.axPoles,...
+                        abs(real(Kstab(:))),...
+                        repmat(R0(:),[size(Kstab,2),1]),...
+                        abs(imag(Kstab(:))./real(Kstab(:))),...
+                        200,...
+                        'k',...
+                        '.',...
+                        'tag','scatCriterion') ;
+                %plot3(abs(real(Kstab)),repmat(R0(:),[1 max(R0)]),abs(imag(Kstab)./real(Kstab)),'.k','markersize',10,'linewidth',.5)
                 stab.axPoles.ZScale = 'log' ;
                 stab.axPoles.SortMethod = 'childorder' ;
                 % Format
@@ -1260,11 +1274,18 @@ function OUT = ESPRIT(Signal,varargin)
                 stab.popupSelect.Callback = @(src,evt)popupSelectCallback(stab) ;
             % Listbox Criterion plot
                 stab.popupCriterion = uicontrol(stab.fig,'style','popupmenu') ;
-                stab.popupCriterion.String = {'None','Complexity'} ;
+                stab.popupCriterion.String = {'None','Complexity','MAC','sigma(f)','sigma(xi)','sigma(phi)'} ;
                 stab.popupCriterion.TooltipString = 'Show a criterion' ;
                 stab.popupCriterion.Units = 'normalized' ;
                 stab.popupCriterion.Position = [stab.axPoles.Position(1:2)+stab.axPoles.Position(3)*[1 0]+[-3*btnWidth-3*margin btnHeight+margin] [btnWidth btnHeight]] ;
                 stab.popupCriterion.Callback = @(src,evt)popupCriterionCallback(stab) ;
+            % Slider to tune the criterion
+                stab.sliderCriterion = uicontrol(stab.fig,'style','slider','tag','sliderCriterion') ;
+                stab.sliderCriterion.TooltipString = 'Tune the criterion' ;
+                stab.sliderCriterion.Units = 'normalized' ;
+                stab.sliderCriterion.Position = [stab.axPoles.Position(1:2)+stab.axPoles.Position(3)*[1 0]+[-5*btnWidth-4*margin btnHeight+margin] [2*btnWidth btnHeight]] ;
+                addlistener(stab.sliderCriterion, 'ContinuousValueChange', @(src,evt) sliderCriterionCallback(stab)) ;
+                %stab.sliderCriterion.Callback = @(src,evt)sliderCriterionCallback(stab) ;
         % Figure Callbacks setting
             stab.fig.WindowButtonMotionFcn = @(src,evt)changeStabDiagOrder(Kstab,stab,'move') ;
             stab.fig.WindowButtonDownFcn = @(src,evt)changeStabDiagOrder(Kstab,stab,'click') ;
@@ -1344,35 +1365,83 @@ function OUT = ESPRIT(Signal,varargin)
 % CHANGE PLOT CRITERION
     function popupCriterionCallback(stab)
         % Delete any preovious criterion
-            delete(findobj(stab.axPoles,'tag','scatCriterion')) ;
+            %delete(findobj(stab.axPoles,'tag','scatCriterion')) ;
             delete(findobj(stab.fig,'type','colorbar')) ;
         % Compute the criterion
-            complex = NaN*ones(size(Kstab)) ;
+            crit = NaN*ones(size(Kstab)) ;
             switch stab.popupCriterion.String{stab.popupCriterion.Value}
                 case 'None' % No Criterion
+                    stab.CData = 'k' ;
                 case 'Complexity' % Evaluate the complexity
                     for or = 1:size(Kstab,1) 
                         for rr = 1:size(Kstab,2) ;
-                            if isnan(Kstab(or,rr)) ; continue; end
+                            if isnan(Kstab(or,rr)) ; continue ; end
                             uu = Ustab(:,or,rr) ;
                             S = [real(uu(:)) imag(uu(:))] ;
                             g = real(eig(S'*S)) ;
                             crit(or,rr) = min(g)/max(g) ;
                         end
                     end
+                case 'MAC' % MAC Value between successive modes
+                    for or = 2:size(Kstab,1) 
+                        for rr = 1:size(Kstab,2) ;
+                            if isnan(Kstab(or,rr)) ; continue ; end
+                            if isnan(Kstab(or-1,rr)) ; continue ; end
+                            mac = Ustab(:,or,rr)'*Ustab(:,or-1,rr)/norm(Ustab(:,or,rr))/norm(Ustab(:,or-1,rr)) ;
+                            crit(or,rr) = 1-abs(mac) ;
+                        end
+                    end
+                case 'sigma(phi)' % MAC Value between successive modes
+                    for or = 2:size(Kstab,1) 
+                        for rr = 1:size(Kstab,2) ;
+                            if isnan(Kstab(or,rr)) ; continue ; end
+                            if isnan(Kstab(or-1,rr)) ; continue ; end
+                            crit(or,rr) = 1/2*norm(Ustab(:,or,rr)-Ustab(:,or-1,rr))/max(norm(Ustab(:,or,rr)),norm(Ustab(:,or-1,rr))) ;
+                        end
+                    end
+                case 'sigma(f)' % MAC Value between successive modes
+                    freqs = abs(real(Kstab)) ;
+                    for or = 2:size(Kstab,1) 
+                        for rr = 1:size(Kstab,2) ;
+                            if isnan(Kstab(or,rr)) ; continue ; end
+                            if isnan(Kstab(or-1,rr)) ; continue ; end
+                            crit(or,rr) = abs(freqs(or,rr)-freqs(or-1,rr))/max(freqs(or,rr),freqs(or-1,rr)) ;
+                        end
+                    end
+                case 'sigma(xi)' % MAC Value between successive modes
+                    xi = abs(imag(Kstab)./real(Kstab)) ;
+                    for or = 2:size(Kstab,1) 
+                        for rr = 1:size(Kstab,2) ;
+                            if isnan(Kstab(or,rr)) ; continue ; end
+                            if isnan(Kstab(or-1,rr)) ; continue ; end
+                            crit(or,rr) = abs(xi(or,rr)-xi(or-1,rr))/max(xi(or,rr),xi(or-1,rr)) ;
+                        end
+                    end
             end
         % Scatter plot
             if ~strcmp('None',stab.popupCriterion.String{stab.popupCriterion.Value})
-                scatter3(stab.axPoles,...
-                        abs(real(Kstab(:))),...
-                        repmat(R0(:),[size(Kstab,2),1]),...
-                        abs(imag(Kstab(:))./real(Kstab(:))),...
-                        50,...
-                        crit(:),...
-                        'filled',...
-                        'tag','scatCriterion') ;
-                colorbar(stab.axPoles) ;
+                % Scatter
+                    stab.scatCriterion.CData = -log10(crit(:)) ;
+                % Colorbar
+                    colorbar(stab.axPoles) ;
+                    colormap(hsv(1000)*.85) ;
+                    cscale = caxis(stab.axPoles) ;
+                % Slider range
+                    sli = findobj(stab.fig,'tag','sliderCriterion') ;
+                    sli.Min = cscale(1) ;
+                    sli.Max = cscale(2) ;
+                    sli.Value = sli.Min ;
             end
+    end
+
+% CHANGE PLOT CRITERION
+    function sliderCriterionCallback(stab)
+        scat = findobj(stab.axPoles,'tag','scatCriterion') ;
+        if isempty(scat) ; return ; end
+        cri = scat.CData ;
+        fr = abs(real(Kstab(:))) ;
+        fr(cri<=stab.sliderCriterion.Value) = NaN ;
+        set(scat,'XData',fr) ;
     end
 
 % CHANGE SELECTION MODE
