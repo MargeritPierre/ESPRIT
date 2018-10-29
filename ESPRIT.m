@@ -28,7 +28,7 @@ function OUT = ESPRIT(Signal,varargin)
 %       R0 : signal order candidates 
 %           1xnR integer : (1:floor(min(arrayfun(@(d)size(Signal,d),DIMS_K)/2)))
 %       M/L : Spatial Smoothing ratio (gives the HbH matrix shape)
-%           1xD double : 0<M_d/L<1 (2/3)
+%           1xD double : 0<M_d/L_d<1 (2/3)
 %               - 0 : no spatial smoothing (M = ones(1,D))
 %               - scalar : same M/L ratio for all dimensions
 %               - 1xD double : different for each dimension 
@@ -52,6 +52,10 @@ function OUT = ESPRIT(Signal,varargin)
 %           1x1 double : (0)
 %           - MAC == 0 : no MAC value computed
 %           - 0 < MAC < 1 : poles with corr > MAC are linked
+%       Kstab : only show the stabil. diag. for previous results
+%           length(R0)xmax(R0) complex double with NaNs ([])
+%       Ustab : only show the stabil. diag. for previous results
+%           prod(Lp)xlength(R0)xmax(R0) complex double with NaNs ([])
 %       STOP : partial execution of the algorithm
 %           string ('None') : 
 %           - 'Hankel'
@@ -105,10 +109,16 @@ function OUT = ESPRIT(Signal,varargin)
 
 
 % INITIALIZATION
+        
+   % Output initialization
+        OUT = [] ;
+        OUT.Title = 'ESPRIT_Results' ;
+        OUT.Signal = Signal ;
 
     % Input Initialization
         parseInputs ; 
         varargin ;
+        paramSet ;
         CHOICE ;
         SOLVER ;
         CRITERION ;
@@ -126,9 +136,8 @@ function OUT = ESPRIT(Signal,varargin)
         DEBUG ;
         STABILDIAG ;
         MAC ;
-        
-   % Output initialization
-        OUT = [] ;
+        Kstab ;
+        Ustab ;
 
    % MANUAL INPUT MODIF. (for debugging)
         %SHIFTS = [1 1 1 ; 0 -1 1 ; 0 1 1] ;
@@ -168,6 +177,7 @@ function OUT = ESPRIT(Signal,varargin)
     % Mean Value
         %Signal = Signal-repmat(mean(Signal,2),[1 size(Signal,2)]) ;
         
+        
     % Output Initialization
         K = [] ; % Wavevectors Matrix
         dK = [] ; % Wavevectors Uncertainty
@@ -180,6 +190,14 @@ function OUT = ESPRIT(Signal,varargin)
         Hss = [] ;
         
         
+% ONLY PLOT SOME PREVIOUS RESULTS ON THE STABILIZATION DIAGRAM ?
+    if ~isempty(Kstab)
+        onlyStabDiag = true ;
+        stabilizationDiagram() ;
+        return ;
+    else
+        onlyStabDiag = false ;
+    end
         
         
 % HANKEL MATRIX BUILDING
@@ -276,19 +294,23 @@ function OUT = ESPRIT(Signal,varargin)
             % ESTER
                 if strcmp(CRITERION,'ALL') || strcmp(CRITERION,'ESTER')
                     if(DEBUG) ; display('        ester') ; end
+                    t = tic ;
                     for r = 1:length(R0)
                         for s = 1:size(SHIFTS,1)
                             ESTER(s,r) = ester(r,s) ;
                         end
+                        if length(R0)>1 && r==1 && DEBUG ; disp(['            estim: ',num2str(toc(t)*length(R0)),' secs']) ; end
                     end
                 end
             % SAMOS
                 if strcmp(CRITERION,'ALL') || strcmp(CRITERION,'SAMOS')
                     if(DEBUG) ; display('        samos') ; end
+                    t = tic ;
                     for r = 1:length(R0)
                         for s = 1:size(SHIFTS,1)
                             SAMOS(s,r) = samos(r,s) ;
                         end
+                        if length(R0)>1 && r==1 && DEBUG ; disp(['            estim: ',num2str(toc(t)*length(R0)),' secs']) ; end
                     end
                 end
         % CHOOSE THE SIGNAL ORDER
@@ -754,7 +776,7 @@ function OUT = ESPRIT(Signal,varargin)
 % UNCERTAINTY ESTIMATION dK
     function computeUncertainties
         % OPTIONS (hard-coded for now)
-            hugeData = true ; % handles huge Data by Bypassing some operations
+            hugeData = true ; % handles huge Data by dividing the data at points
             estimate =  ... 'std' ... % Standard Deviation
                          'delta' ... % Sensibility or perturbation
                         ;
@@ -936,13 +958,59 @@ function OUT = ESPRIT(Signal,varargin)
     
 
 % ===================================================================================================================    
-% FUNCTIONS FOR UTILS
+% INPUT PROCESSING
 % ===================================================================================================================
+
+
+% DEFAULT ARGUMENTS
+    function defInputs(paramSet)
+        if ~paramSet(1) ; DIMS_K = find(size(Signal)~=1,1,'last') ; end
+        if ~paramSet(2) ; FUNC = repmat('exp',[length(DIMS_K) 1]) ; end
+        if ~paramSet(3) ; R0 = 1:floor(min(arrayfun(@(d)size(Signal,d),DIMS_K)/2)) ; end
+        if ~paramSet(4) ; CRIT_THRS = 1 ; end
+        if ~paramSet(5) ; FIT = 'TLS' ; end
+        if ~paramSet(6) ; DECIM = ones(1,ndims(Signal)) ; end
+        if ~paramSet(7) ; SHIFTS = eye(length(DIMS_K)) ; end
+        if ~paramSet(8) ; CHOICE = 'auto' ; end
+        if ~paramSet(9) ; STABILDIAG = false ; end
+        if ~paramSet(10) ; MAC = false ; end
+        if ~paramSet(11) ; DEBUG = false ; end
+        if ~paramSet(12) ; CRITERION = 'MDL' ; end
+        if ~paramSet(13) ; SOLVER = 'eig' ; end
+        if ~paramSet(14) ; COMPUTE_U = false ; end
+        if ~paramSet(15) ; M_L = 2/3 ; end
+        if ~paramSet(16) ; W0 = [] ; end
+        if ~paramSet(17) ; COMPUTE_dK = false ; end
+        if ~paramSet(18) ; SIGNAL_MODEL = false ; end
+        if ~paramSet(19) ; COMPUTE_dU = false ; end
+        if ~paramSet(20) ; Kstab = [] ; end
+        if ~paramSet(21) ; Ustab = [] ; end
+    end
+
 
 % PROCESS INPUTS
     function parseInputs
-        nargin = length(varargin) ;
-        paramSet = false(100) ;
+        % Initialize
+            nargin = length(varargin) ;
+            paramSet = false(100) ;
+            defInputs(paramSet) ;
+        % Processing to do
+            TODO = [] ; % Default, DO everything
+        % Is the first argument a structure ?
+            if isstruct(varargin{1}) && strcmp(varargin{1}.Title,'ESPRIT_Results')
+                % Initialize the output
+                    OUT = varargin{1} ;
+                % Import the structure
+                    for fname = fieldnames(OUT)'
+                        try eval([fname{1},'=OUT.',fname{1},';']) ; end
+                    end
+                % Is there a second argument to limit the processing ?
+                    if nargin>2
+                        TODO = varargin{2} ;
+                    end
+                % Skeep varargin processing
+                    return ;
+            end
         % Is DIMS_K the first argument ?
             if mod(nargin,2)==1 
                 if isnumeric(varargin{1})
@@ -1019,6 +1087,12 @@ function OUT = ESPRIT(Signal,varargin)
                         case 'COMPUTE_DU'
                             COMPUTE_dU = Value ;
                             paramSet(19) = true ;
+                        case 'KSTAB'
+                            Kstab = Value ;
+                            paramSet(20) = true ;
+                        case 'USTAB'
+                            Ustab = Value ;
+                            paramSet(21) = true ;
                         otherwise
                             %errorInput(['Wrong argument name in n°',num2str(i),'.'])
                             errorInput([Name,' (n°',num2str(i),').'])
@@ -1026,25 +1100,7 @@ function OUT = ESPRIT(Signal,varargin)
                 end
             end
         % DEFAULT VALUES
-            if ~paramSet(1) ; DIMS_K = find(size(Signal)~=1,1,'last') ; end
-            if ~paramSet(2) ; FUNC = repmat('exp',[length(DIMS_K) 1]) ; end
-            if ~paramSet(3) ; R0 = 1:floor(min(arrayfun(@(d)size(Signal,d),DIMS_K)/2)) ; end
-            if ~paramSet(4) ; CRIT_THRS = 1 ; end
-            if ~paramSet(5) ; FIT = 'TLS' ; end
-            if ~paramSet(6) ; DECIM = ones(1,ndims(Signal)) ; end
-            if ~paramSet(7) ; SHIFTS = eye(length(DIMS_K)) ; end
-            if ~paramSet(8) ; CHOICE = 'auto' ; end
-            if ~paramSet(9) ; STABILDIAG = false ; end
-            if ~paramSet(10) ; MAC = false ; end
-            if ~paramSet(11) ; DEBUG = false ; end
-            if ~paramSet(12) ; CRITERION = 'MDL' ; end
-            if ~paramSet(13) ; SOLVER = 'eig' ; end
-            if ~paramSet(14) ; COMPUTE_U = false ; end
-            if ~paramSet(15) ; M_L = 2/3 ; end
-            if ~paramSet(16) ; W0 = [] ; end
-            if ~paramSet(17) ; COMPUTE_dK = false ; end
-            if ~paramSet(18) ; SIGNAL_MODEL = false ; end
-            if ~paramSet(19) ; COMPUTE_dU = false ; end
+            defInputs(paramSet) ;
     end
 
 
@@ -1065,30 +1121,45 @@ function OUT = ESPRIT(Signal,varargin)
 % PLOT THE STABILIZATION DIAGRAM
     function stabilizationDiagram()
         if length(DIMS_K)>1 ; warning('Stabilization Diagram is available for 1D-ESPRIT only.') ; return ; end
-        % Compute All the Poles for All Signal Orders
-            Kstab = zeros(length(R0),max(R0))*NaN*(1+1i) ;
-            Ustab = zeros(prod(Lp),length(R0),max(R0))*NaN*(1+1i) ;
-            for r = 1:length(R0)
-                extractPoles(r) ; 
-                Kstab(r,1:R0(r)) = K ;
+        % Are old results available or compute the stab. diag. ?
+            if onlyStabDiag
+                K = Kstab(end,:) ;
+                R = size(Kstab,1) ;
+            else
+                % Compute All the Poles for All Signal Orders
+                    Kstab = zeros(length(R0),max(R0))*NaN*(1+1i) ;
+                    for r = 1:length(R0)
+                        extractPoles(r) ; 
+                        Kstab(r,1:R0(r)) = K ;
+                    end
+                    K = Kstab(R,1:R0(R)) ;
+                % Sort the poles
+                    Kstab = sort(Kstab,2,'ascend') ; % Simply sort by value
             end
-            K = Kstab(R,1:R0(R)) ;
-        % Sort the poles
-            Kstab = sort(Kstab,2,'ascend') ; % Simply sort by value
         % Initialize the stabilization diagram
             stab = InitStabDiag() ;
         % SORT WITH MAC VALUES
-            if MAC % Sort with MACs
-                stab = SortStabDiag(stab) ;
-                V = [] ;
-            end
+            % Initialize the branches
+                stab.branches = plot3(stab.axPoles,...
+                                        NaN*ones(length(R0),max(R0)),...
+                                        NaN*ones(length(R0),max(R0)),...
+                                        NaN*ones(length(R0),max(R0)),...
+                                        '-k','linewidth',.5) ;
+                uistack(stab.branches,'bottom') ;
+                set(stab.branches,'color',[1 1 1]*.5) ;
+            % Sort if needed
+                if isempty(Ustab) && MAC % Sort with MACs
+                    stab = SortStabDiag(stab) ;
+                    V = [] ;
+                end
         % Backup the current poles choice
             K = Kstab(R,1:R0(R)) ;
         % Init interactions
             stab = InitModeShape(stab) ;
             stab = InitStabDiagInteract(stab) ;
         % Wait for the figure to be closed
-            uiwait(stab.fig) ;
+            stab;
+            if ~onlyStabDiag ; uiwait(stab.fig) ; end
             drawnow ;
     end
 
@@ -1098,13 +1169,6 @@ function OUT = ESPRIT(Signal,varargin)
         % Initialize
             %Ustab = ones(prod(Lp),length(R0),max(R0))*NaN*(1+1i) ; % dims : [Point order pole]
             Ustab = ones(length(indP),length(R0),max(R0))*NaN*(1+1i) ; % dims : [Point order pole]
-            stab.branches = plot3(stab.axPoles,...
-                                    NaN*ones(length(R0),max(R0)),...
-                                    NaN*ones(length(R0),max(R0)),...
-                                    NaN*ones(length(R0),max(R0)),...
-                                    '-k','linewidth',.5) ;
-            uistack(stab.branches,'bottom') ;
-            set(stab.branches,'color',[1 1 1]*.5) ;
         % Process Data
             for r = 1:length(R0)
                 % Compute the mode
@@ -1371,19 +1435,23 @@ function OUT = ESPRIT(Signal,varargin)
             delete(findobj(stab.fig,'type','colorbar')) ;
         % Compute the criterion
             crit = NaN*ones(size(Kstab)) ;
+            maxCrit = 9 ;
             switch stab.popupCriterion.String{stab.popupCriterion.Value}
                 case 'None' % No Criterion
                     stab.CData = 'k' ;
+                    set(stab.branches,'visible','on') ;
                 case 'Complexity' % Evaluate the complexity
                     for or = 1:size(Kstab,1) 
                         for rr = 1:size(Kstab,2) ;
                             if isnan(Kstab(or,rr)) ; continue ; end
                             uu = Ustab(:,or,rr) ;
+                            uu = uu./abs(uu) ;
                             S = [real(uu(:)) imag(uu(:))] ;
-                            g = real(eig(S'*S)) ;
+                            g = sqrt(real(eig(S'*S))) ;
                             crit(or,rr) = min(g)/max(g) ;
                         end
                     end
+                    maxCrit = 3 ;
                 case 'MAC' % MAC Value between successive modes
                     for or = 2:size(Kstab,1) 
                         for rr = 1:size(Kstab,2) ;
@@ -1393,6 +1461,7 @@ function OUT = ESPRIT(Signal,varargin)
                             crit(or,rr) = 1-abs(mac) ;
                         end
                     end
+                    maxCrit = 3 ;
                 case 'sigma(phi)' % MAC Value between successive modes
                     for or = 2:size(Kstab,1) 
                         for rr = 1:size(Kstab,2) ;
@@ -1422,16 +1491,21 @@ function OUT = ESPRIT(Signal,varargin)
             end
         % Scatter plot
             if ~strcmp('None',stab.popupCriterion.String{stab.popupCriterion.Value})
+                % Hide the branches
+                    set(stab.branches,'visible','off') ;
                 % Scatter
                     stab.scatCriterion.CData = -log10(crit(:)) ;
                 % Colorbar
                     colorbar(stab.axPoles) ;
-                    colormap(hsv(1000)*.85) ;
-                    cscale = caxis(stab.axPoles) ;
+                    colormap(linspecer(1000)*.85) ;
+                % Color Range
+                    caxis auto
+                    caxis(stab.axPoles,[min(caxis(stab.axPoles)) min(max(caxis(stab.axPoles)),maxCrit)])
                 % Slider range
+                    crange = caxis(stab.axPoles) ;
                     sli = findobj(stab.fig,'tag','sliderCriterion') ;
-                    sli.Min = cscale(1) ;
-                    sli.Max = cscale(2) ;
+                    sli.Min = crange(1) ;
+                    sli.Max = crange(2) ;
                     sli.Value = sli.Min ;
             end
     end
