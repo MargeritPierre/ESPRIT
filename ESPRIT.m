@@ -1371,14 +1371,16 @@ function OUT = ESPRIT(Signal,varargin)
         switch event % MOUSE MOVED OR CLICKED
             case 'move' % ONLY DISPLAY
                 % Process the mode shape
-                    uu = Ustab(:,order,numPole) ;
-                    uu = uu./max(abs(uu(:))) ;
-                % Plot the mode shape
-                    stab.plotShape.XData = real(uu) ;
-                    stab.plotShape.YData = imag(uu) ;
-                    stab.markShape.XData = abs(real(Kstab(order,numPole))) ;
-                    stab.markShape.YData = R0(order) ;
-                    stab.markShape.ZData = abs(imag(Kstab(order,numPole))./real(Kstab(order,numPole))) ;
+                    if MAC
+                        uu = Ustab(:,order,numPole) ;
+                        uu = uu./max(abs(uu(:))) ;
+                        % Plot the mode shape
+                            stab.plotShape.XData = real(uu) ;
+                            stab.plotShape.YData = imag(uu) ;
+                            stab.markShape.XData = abs(real(Kstab(order,numPole))) ;
+                            stab.markShape.YData = R0(order) ;
+                            stab.markShape.ZData = abs(imag(Kstab(order,numPole))./real(Kstab(order,numPole))) ;
+                    end
                 % Order cursor
                     stab.plOrderLine.XData = R0(order)*[1 1] ;
                     stab.plOrderPoles.XData = abs(real(Kstab(order,:))) ;
