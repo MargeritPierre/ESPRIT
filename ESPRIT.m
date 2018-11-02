@@ -299,6 +299,7 @@ function OUT = ESPRIT(Signal,varargin)
                         for s = 1:size(SHIFTS,1)
                             ESTER(s,r) = ester(r,s) ;
                         end
+                        CRIT = ESTER ;
                         if length(R0)>1 && r==1 && DEBUG ; disp(['            estim: ',num2str(toc(t)*length(R0)),' secs']) ; end
                     end
                 end
@@ -312,6 +313,7 @@ function OUT = ESPRIT(Signal,varargin)
                         end
                         if length(R0)>1 && r==1 && DEBUG ; disp(['            estim: ',num2str(toc(t)*length(R0)),' secs']) ; end
                     end
+                    CRIT = SAMOS ;
                 end
         % CHOOSE THE SIGNAL ORDER
             CRIT = prod(CRIT,1) ;
@@ -777,8 +779,8 @@ function OUT = ESPRIT(Signal,varargin)
     function computeUncertainties
         % OPTIONS (hard-coded for now)
             hugeData = true ; % handles huge Data by dividing the data at points
-            estimate =  ... 'std' ... % Standard Deviation
-                         'delta' ... % Sensibility or perturbation
+            estimate =   'std' ... % Standard Deviation
+                        ... 'delta' ... % Sensibility or perturbation
                         ;
             lin_method =     'conv' ... % Linearization method for the variance:
                             ... 'kron'...
