@@ -118,24 +118,27 @@ function OUT = ESPRIT(Signal,varargin)
     % Input Initialization
         parseInputs ; 
         varargin ;
-        paramSet ;
-        CHOICE ;
-        SOLVER ;
-        CRITERION ;
-        CRIT_THRS ; 
-        COMPUTE_U ;
-        COMPUTE_dK ;
-        DIMS_K ; 
-        FUNC ; 
-        R0 ; 
-        M_L ;
-        W0 ;
-        FIT ; 
-        DECIM ; 
-        SHIFTS ; 
-        DEBUG ;
-        STABILDIAG ;
-        MAC ;
+        paramSet = paramSet ;
+        CHOICE = CHOICE ;
+        SOLVER = SOLVER ;
+        CRITERION = CRITERION ;
+        CRIT_THRS = CRIT_THRS ; 
+        COMPUTE_U = COMPUTE_U ;
+        COMPUTE_dK = COMPUTE_dK ;
+        DIMS_K = DIMS_K ; 
+        FUNC = FUNC ; 
+        R0 = R0 ; 
+        M_L = M_L ;
+        W0 = W0 ;
+        FIT = FIT ; 
+        DECIM = DECIM ; 
+        SHIFTS = SHIFTS ; 
+        DEBUG = DEBUG ;
+        STABILDIAG = STABILDIAG ;
+        SIGNAL_MODEL = SIGNAL_MODEL ;
+        COMPUTE_dU = COMPUTE_dU ;
+        COMPUTE_dK = COMPUTE_dK ;
+        MAC = MAC ;
         Kstab ;
         Ustab ;
 
@@ -343,7 +346,7 @@ function OUT = ESPRIT(Signal,varargin)
     if COMPUTE_U
         if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Amplitude Estimation : ') ; lastTime = tic ; end
         computeU() ;
-        A ;
+        A = A ;
     end
 
 % BUILD THE SIGNAl MODEL
