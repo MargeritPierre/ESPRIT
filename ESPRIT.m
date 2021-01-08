@@ -322,6 +322,7 @@ function OUT = ESPRIT(Signal,varargin)
             CRIT = prod(CRIT,1) ;
             R = find(CRIT>=max(CRIT)*CRIT_THRS,1,'last') ;
             OUT.CRIT = CRIT ;
+            OUT.R = R ;
     end
     
         
