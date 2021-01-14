@@ -1,5 +1,4 @@
-function OUT = ESPRIT(Signal,varargin)
-%
+classdef ESPRIT < handle
 % ESPRIT Extract wavevectors from a signal
 %
 %   OUT = ESPRIT(Signal,varargin)
@@ -65,1496 +64,878 @@ function OUT = ESPRIT(Signal,varargin)
 %           - 'Wavevectors'
 %           - 'Amplitudes'
 %           - 'None'
-%
-%
-%   OUT structure : 
-%    % Sizes
-%       Lp : dimensions of the signal over the isophase surface (size : [1 length(DIMS_P)])
-%       Lk : dimensions of the signal over the wavevectors (size : [1 length(DIMS_K)])
-%       Kk : number of rows of the signal matrix for each signal dimension (size : [1 length(DIMS_K)])
-%       Mk : number of columns of the signal matrix for each signal dimension (size : [1 length(DIMS_K)])
-%    % HbH Matrix
-%       indHbH : cell of indices for the HbH matrix
-%       indP : indices of the isophase surface points used to compute the covariance matrix Css
-%    % Subspace
-%       Css : Autocovariance matrix (size : [prod(Kk) prod(Mk)])
-%       W : Truncated signal subspace, max(R0) first E.Vec of CSS (size : [prod(Kk) max(R0)])
-%       lambda : max(R0) first E.Val of Css (size : [max(R0) 1])
-%    % Signal Order Criterion
-%       CRIT : final signal order criterion (size : [1 length(R0)])
-%       ESTER  : ester criterion for each shift (size : [size(SHIFTS,1) length(R0)])
-%    % Results
-%       K : extracted complex wavevectors (size : [length(DIMS_K) R])
-%       dK : uncertainties (size : [length(DIMS_K) R])
-%       U : complex amplitudes (modes) (size : [[Lp] R])
-%
-%
-% This ESPRIT algorithm implements :
-%   - Standard ('exp') and Paired ('cos') ESPRIT (FUNC)
-%   - ESTER criterion (ESTER_THRS)
-%   - Multidimensionnal (DIMS_K)
-%   - LS or TLS linear regression (FIT)
-%   - Multiple Invariance or Multiple Resolution (SHIFTS)
-%   - Decimate ESPRIT (DECIM)
-%   - Stabilization Diagram (STABILDIAG)
-%   - Choice between EIG, EIGS computing W for speed
-%   - Allow for the signal subspace tracking for speed (trough W and W0)
-%    
-% To go further on developments :
-%   (1) use of high-order cummulents
-%   (2) MR-ESPRIT : solving ambiguity when Nyquist is violated
-%   (3) GUI for manual choice
-%   (4) Cramer-Rao bound, uncertainty estimation
-%   (5) replace kron() by repelem() in indHbH_d build for speed (ver>=Matlab2015)
 
+%% INPUT (SET ACCESSIBLE) PARAMETERS
+properties
+    Signal
+    DIMS_K(1,:) 
+    M_L(1,:) double = 1/2
+    DECIM(1,:)
+    R0(1,:) 
+    W0
+    SOLVER char = 'eig'
+    CRITERION char = 'MDL'
+    CRIT_THRS(1,1) double = 1
+    CHOICE char = 'auto'
+    FUNC cell
+    SHIFTS 
+    FIT(1,:) char = 'TLS'
+    DEBUG(1,1) logical = false
+    COMPUTE_U(1,1) logical = false
+    STABILDIAG(1,1) logical = false
+    SIGNAL_MODEL(1,1) logical = false
+    COMPUTE_dU(1,1) logical = false
+    COMPUTE_dK(1,1) logical = false
+    MAC(1,1) logical = false
+end
 
-% INITIALIZATION
-        
-   % Output initialization
-        OUT = [] ;
-        OUT.Title = 'ESPRIT_Results' ;
-        OUT.Signal = Signal ;
+%% OUTPUT PROPERTIES (FOR COMPATIBILITY REASONS)
+properties
+    K,U,PHI
+end
 
-    % Input Initialization
-        parseInputs ; 
-        varargin ;
-        paramSet = paramSet ;
-        CHOICE = CHOICE ;
-        SOLVER = SOLVER ;
-        CRITERION = CRITERION ;
-        CRIT_THRS = CRIT_THRS ; 
-        COMPUTE_U = COMPUTE_U ;
-        COMPUTE_dK = COMPUTE_dK ;
-        DIMS_K = DIMS_K ; 
-        FUNC = FUNC ; 
-        R0 = R0 ; 
-        M_L = M_L ;
-        W0 = W0 ;
-        FIT = FIT ; 
-        DECIM = DECIM ; 
-        SHIFTS = SHIFTS ; 
-        DEBUG = DEBUG ;
-        STABILDIAG = STABILDIAG ;
-        SIGNAL_MODEL = SIGNAL_MODEL ;
-        COMPUTE_dU = COMPUTE_dU ;
-        COMPUTE_dK = COMPUTE_dK ;
-        MAC = MAC ;
-        Kstab ;
-        Ustab ;
-
-   % MANUAL INPUT MODIF. (for debugging)
-        %SHIFTS = [1 1 1 ; 0 -1 1 ; 0 1 1] ;
-        %SHIFTS = [SHIFTS ; 2*SHIFTS] ;
-        %SHIFTS = [1 2 3]' ;
-        %DECIM = [1 1 2] ;
-        %FUNC = ['exp' ; 'cos' ; 'exp'] ;
-        %FUNC = repmat('cos',[length(DIMS_K) 1]) ;
-        
-   % DEBUGGING ?
-        if(DEBUG)
-            display(char(10)) ;
-            display('----------- ESPRIT ND -----------') ;
-            display('   Initialization : ') ; lastTime = tic ;
+%% CONSTRUCTOR/DESTRUCTOR
+methods
+    function this = ESPRIT(varargin)
+    % Class Constructor
+        if nargin==0 ; return ; end
+    % Depending on the number of numeric pre-inputs...
+        nPreNumeric = find(cellfun(@ischar,[varargin 'end']),1,'first')-1 ; 
+    % ESPRIT(Signal,...)
+        if nPreNumeric>=1 ; this.Signal = varargin{1} ; end 
+    % ESPRIT(Signal,DIMS_K,...)
+        if nPreNumeric>=2 ; this.DIMS_K = varargin{2} ; end
+    % ESPRIT(Signal,DIMS_K,R0,...)
+        if nPreNumeric>=3 ; this.R0 = varargin{3} ; end
+    % Set properties
+        varargin = varargin(nPreNumeric+1:end) ;
+        this.setProperties(varargin{:}) ;
+    % If no signal is available, do not go further
+        if isempty(this.Signal) ; return ; end
+    % Extract the wavevectors
+        this.K = this.extractPoles ; 
+    % Extract the modes
+        if this.COMPUTE_U
+            V = this.vandermondeMatrix(this.K) ;
+            A = this.extractAmplitudes(V) ;
+            [this.U,this.PHI] = this.extractModes(A) ;
         end
-        
-    % Necessary informations
-        SIZE = size(Signal) ; % Size of the signal
-        NDIMS = ndims(Signal) ; DIMS = 1:NDIMS ; % Dimension of the signal
-        DIMS_P = DIMS(~ismember(DIMS,DIMS_K)) ; % Dimensions of the isosurface (avoids setdiff() which is slow)
-        Lk = SIZE(DIMS_K) ; % Number of points in the dimensions of the exponentials
-        Lp = SIZE(DIMS_P) ; % Number of points in the dimensions of the isophase surface
-        % When only one point over the isophase surface
-            if isempty(DIMS_P) ; Lp = 1 ; end
-        % Decimation
-            DECIM_K = DECIM(DIMS_K) ;
-            DECIM_P = DECIM(DIMS_P) ;
-        % Directions of exponentials & cosinuses
-            isCOS = ismember(num2cell(FUNC,2)','cos') ;
-            isEXP = ~isCOS ;
-            
-    % Reshaping the signal
-        Signal = permute(Signal,[DIMS_P DIMS_K]) ; % Sort dimensions
-        Signal = reshape(Signal,[prod(Lp) prod(Lk)]) ;
-        [~,permDims] = sort([DIMS_P DIMS_K]) ; % Used to rechape the signal model
-    
-    % Mean Value
-        %Signal = Signal-repmat(mean(Signal,2),[1 size(Signal,2)]) ;
-        
-        
-    % Output Initialization
-        K = [] ; % Wavevectors Matrix
-        dK = [] ; % Wavevectors Uncertainty
-        V = [] ; % Steering Matrix
-        U = [] ; % Amplitudes
-        dU = [] ; % Amplitudes Uncertainty
-        if any(isCOS) ; PHI = [] ; end % Phases of the cosinuses
-        SignalModel = [] ; % Reconstructed Signal Model
-        dS = [] ; % Errors
-        Hss = [] ;
-        
-        
-% ONLY PLOT SOME PREVIOUS RESULTS ON THE STABILIZATION DIAGRAM ?
-    if ~isempty(Kstab)
-        onlyStabDiag = true ;
-        stabilizationDiagram() ;
-        return ;
-    else
-        onlyStabDiag = false ;
-    end
-        
-        
-% HANKEL MATRIX BUILDING
-    if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Hankel Matrix Indices : ') ; lastTime = tic ; end
-    
-    % Determine the hankel matrix sizes
-        Kk = [] ;
-        Mk = [] ;
-        setHankelSize() ;
-        
-    % Buil sub-Hankel matrices indices
-        n_indHbH = any(isCOS)+1 ;
-        subIndH = {} ;
-        subHankelInd() ;
-        
-    % Hankel-block-Hankel matrix indices
-        
-        % Indices for each dimension (used in shift invariances and Vandermonde matrix)
-            indHbH_d =  {} ;
-            indicesHbH_d() ;
-            
-        % Complete indices
-            indHbH = [] ;
-            indP = [] ;
-            indicesHbH() ;
-            
-        
-        
-        
-% AUTOCOVARIANCE MATRIX
-    if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Computing of Css : ') ; lastTime = tic ; end
-        % Computation speedup
-            if prod(Kk)<prod(Mk)*length(indP)
-                transpCss = false ; % Css = H*H' , [W,lambda] = eig(Css)
-                Css = buildCss() ;
-            else
-                transpCss = true ; % Css = H'*H , [Wr,lambda] = eig(Css), W = H*W\diag(sqrt(lambda)) ,
-                if(DEBUG) ; display('        transpCss: build Hss') ; end
-                Hss = buildHss(Signal) ;
-                if(DEBUG) ; display('         ... and Css = Hss''*Hss') ; end
-                Css = Hss'*Hss ;
-            end
-        
-        
-        
-% SIGNAL SUBSPACE ESTIMATION        
-    if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Eigendecomposition of Css : ') ; lastTime = tic ; end
-    % Adjust signal order candidates
-        R0 = R0(R0<=size(Css,1)-1-max(sum(abs(SHIFTS),2))) ;
-    % ESTIMATION
-        if isempty(W0) % re-compute the signal subspace
-            switch SOLVER
-                case 'eig'
-                    [W,lambda] = eig(Css,'vector') ;
-                case 'eigs'
-                    [W,lambda] = eigs(Css,max(R0),'lm') ;
-                    lambda = diag(lambda) ;
-            end
-        else % Approximate with one QR iteration (Badeau-style)
-            Cxy = Css*W0 ;
-            [W,~] = qr(Cxy,0) ;
-            lambda = diag(W'*Css*W) ;
+    % Compute uncertainties
+        if this.COMPUTE_dK || this.COMPUTE_dU
+            [this.dK,this.dU] = this.computeUncertainties ;
         end
-    % SORT EIGENVALUES IN DESCENDING ORDER
-        [~,Ind] = sort(lambda,'descend') ;
-        lambda = lambda(Ind) ;
-        W = W(:,Ind) ;
-    % GET THE LEFT EIGENVECTORS
-        if transpCss
-            if(DEBUG) ; display('        transpCss: compute left eig.vec') ; end
-            W = Hss*W ;
-            W = bsxfun(@(w,l)w./l, W, sqrt(lambda(:)).') ;
+    end
+    
+    function delete(this)
+    % Class Destructor
+    end
+end
+
+%% SET PROPERTIES
+methods
+    function setProperties(this,varargin)
+    % Set the properties with a given argument array
+        if mod(numel(varargin),2) ; error('Wrong number of arguments provided') ; end
+        propNames = varargin(1:2:end-1) ;
+        propValues = varargin(2:2:end) ;
+        for pp=1:numel(propNames)
+            this.(propNames{pp}) = propValues{pp} ;
         end
-    % KEEP the needed E.V only
-        lambda = lambda(1:max(R0)) ;
-        W = W(:,1:max(R0)) ;
-        
-        
-% SIGNAL ORGER CRITERION
-    if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Signal Order Criterion : ') ; lastTime = tic ; end
-    if length(R0)==1 % THE SIGNAL ORDER HAS BEEN GIVEN
-        R = 1 ;
-    else % SIGNAL ORDER CHOICE
-        % INITIALIZATION
-            ESTER = NaN*ones(size(SHIFTS,1),length(R0)) ;
-            SAMOS = NaN*ones(size(SHIFTS,1),length(R0)) ;
-        % MDL
-            MDL = (lambda(1:end-1)-lambda(2:end))./lambda(1:end-1) ;
-            MDL = [MDL ; 0] ;
-            MDL = MDL(R0) ;
-            MDL = MDL(:)' ;
-            CRIT = MDL ;
-        % OTHER CRITERIONS
-            % ESTER
-                if strcmp(CRITERION,'ALL') || strcmp(CRITERION,'ESTER')
-                    if(DEBUG) ; display('        ester') ; end
-                    t = tic ;
-                    for r = 1:length(R0)
-                        for s = 1:size(SHIFTS,1)
-                            ESTER(s,r) = ester(r,s) ;
-                        end
-                        CRIT = ESTER ;
-                        if length(R0)>1 && r==1 && DEBUG ; disp(['            estim: ',num2str(toc(t)*length(R0)),' secs']) ; end
-                    end
-                end
-            % SAMOS
-                if strcmp(CRITERION,'ALL') || strcmp(CRITERION,'SAMOS')
-                    if(DEBUG) ; display('        samos') ; end
-                    t = tic ;
-                    for r = 1:length(R0)
-                        for s = 1:size(SHIFTS,1)
-                            SAMOS(s,r) = samos(r,s) ;
-                        end
-                        if length(R0)>1 && r==1 && DEBUG ; disp(['            estim: ',num2str(toc(t)*length(R0)),' secs']) ; end
-                    end
-                    CRIT = SAMOS ;
-                end
-        % CHOOSE THE SIGNAL ORDER
-            CRIT = prod(CRIT,1) ;
-            R = find(CRIT>=max(CRIT)*CRIT_THRS,1,'last') ;
-            OUT.CRIT = CRIT ;
-            OUT.R = R ;
+    % Set the other properties
+        this.setDefaultProperties ;
     end
     
-        
-% STABILIZATION DIAGRAM
-    if STABILDIAG && length(R0)>1
-        Kstab = [] ;
-        Ustab = [] ;
-        MAC ;
-        if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Stabilization Diagram : ') ; lastTime = tic ; end
-        stabilizationDiagram() ;
+    function setDefaultProperties(this)
+    % Set the default value of dependent properties
+        if isempty(this.Signal) ; return ; end
+        if isempty(this.DIMS_K) ; this.DIMS_K = find(size(this.Signal)>1,1,'last') ; end 
+        if isempty(this.DECIM) ; this.DECIM = ones(1,ndims(this.Signal)) ; end  
+        if isempty(this.R0) ; this.R0 = 1:floor(min(arrayfun(@(d)size(this.Signal,d),this.DIMS_K)/2)) ; end
+        if isempty(this.FUNC) ; this.FUNC = repmat({'exp'},[numel(this.DIMS_K) 1]) ; end 
+        if isempty(this.SHIFTS) ; this.SHIFTS = eye(length(this.DIMS_K)) ; end   
     end
-        
-    
-% EXTRACT THE WAVEVECTORS
-    if ~STABILDIAG || COMPUTE_dK
-        if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Pole Estimation : ') ; lastTime = tic ; end
-        [T,~] = extractPoles(R) ;
-    end
-        
-    
-% ESTIMATE AMPLITUDES
-    if COMPUTE_U
-        if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Amplitude Estimation : ') ; lastTime = tic ; end
-        computeU() ;
-        A = A ;
-    end
+end
 
-% BUILD THE SIGNAl MODEL
-    if SIGNAL_MODEL
-        computeSignalModel() ;
+
+%% SIZE INFORMATION
+properties (SetAccess=protected,Dependent)
+    DIMS_P(1,:) % dimensions of the signal corresponding to amplitudes/modes
+    Lk(1,:) % total length of the signal in the wavevector dimensions
+    Lp(1,:) % total length of the signal in the amplitudes/modes dimensions
+    DECIM_K(1,:) % decimation factors on wavevector dimensions
+    DECIM_P(1,:) % decimation factors on amplitudes/modesr dimensions
+end
+methods
+    function out = get.DIMS_P(this) 
+        out = setdiff(1:ndims(this.Signal),this.DIMS_K) ; 
+        if isempty(out) ; out = ndims(this.Signal) + 1 ; end
+    end
+    function out = get.Lk(this) ; out = size(this.Signal,this.DIMS_K) ; end
+    function out = get.Lp(this) ; out = size(this.Signal,this.DIMS_P) ; end
+    function out = get.DECIM_K(this) ; out = this.DECIM(this.DIMS_K) ; end
+    function out = get.DECIM_P(this) 
+        dec = [this.DECIM 1] ;
+        out = dec(this.DIMS_P) ; 
+    end
+% Which dimension corresponds to an exponential/cosine component ? 
+    function out = isCOS(this) ; out = ismember(this.FUNC(:)','cos') ; end
+    function out = isEXP(this) ; out = ismember(this.FUNC(:)','exp') ; end
+end
+
+
+%% SPATIAL SMOOTHING LENGTHS
+properties (SetAccess=protected,Dependent)
+    Mk(1,:) % Spatial smoothing snapshots
+    Kk(1,:) % Snapshot size
+end
+methods
+    function m_l = spatialSmoothing(this)
+    % Correct spatial smoothing criterion
+        m_l = this.M_L ;
+        m_l = max(m_l,1./this.Lk) ; % avoids Mk=0
+        m_l = min(m_l,1-1./this.Lk) ; % avoids Kk=0
     end
     
-    
-% ESTIMATE UNCERTAINTIES
-    if COMPUTE_dK || COMPUTE_dU 
-        if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Uncertainty Estimation : ') ; lastTime = tic ; end
-        computeUncertainties ;
+    function k = get.Kk(this) 
+    % Snapshot size: max size of (signal+noise) subspace
+        k = floor((1-this.spatialSmoothing).*this.Lk./this.DECIM_K + 1) ;        
+    % When Decimation, force the spatial smoothing to use all data
+        decimAndNoSS = this.Lk-(k-1).*this.DECIM_K<this.DECIM_K ;
+        k(decimAndNoSS) = k(decimAndNoSS)-1 ;
+    % Cosines: use half the data
+        k(this.isCOS) = floor(k(this.isCOS)/2) ;
     end
-        
     
-% OUTPUT
-    if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('   Output : ') ; lastTime = tic ; end
-    % Input arguments
-        OUT.varargin = varargin ;
-        OUT.R0 = R0 ;
-    % Results
-        OUT.K = K ;
-        OUT.V = V ;
-        OUT.U = U ;
-        if any(isCOS) ; OUT.PHI = PHI ; end
-        if ~isempty(SignalModel)
-            if isempty(DIMS_P)
-                OUT.SignalModel = reshape(SignalModel,Lk) ;
-                OUT.dS = reshape(dS,Lk) ;
-            else
-                OUT.SignalModel = permute(reshape(SignalModel,[Lp Lk]),permDims) ;
-                OUT.dS = permute(reshape(dS,[Lp Lk]),permDims) ;
-            end
-            OUT.RelativeError = norm(dS(:))/norm(Signal(:)) ;
-        end
-    % Uncertainties
-        OUT.dK = dK ;
-        OUT.dU = dU ;
-    % Sizes
-        OUT.Lp = Lp ;
-        OUT.Lk = Lk ;
-        OUT.Kk = Kk ;
-        OUT.Mk = Mk ;
-        OUT.isCOS = isCOS ;
-        OUT.isEXP = isEXP ;
-    % Decimation
-        OUT.DECIM_K = DECIM_K ;
-        OUT.DECIM_P = DECIM_P ;
-    % HbH indices
-        OUT.subIndH = subIndH ;
-        OUT.indHbH = indHbH ;
-        OUT.indP = indP ;
-    % Subspace
-        OUT.transpCss = transpCss ;
-        OUT.Css = Css ;
-        OUT.lambda = lambda ;
-        OUT.W = W ;
-    % Signal Order
-        if length(R0)>1
-            OUT.CRIT = CRIT ;
-            OUT.MDL = MDL ;
-            OUT.ESTER = ESTER ;
-            OUT.SAMOS = SAMOS ;
-        end
-    % Stabilization Diagram 
-        if STABILDIAG && length(R0)>1
-            OUT.Kstab = Kstab ;
-            OUT.Ustab = Ustab ;
-        end
-    
-
-% END OF THE PROCEDURE
-    if(DEBUG) ; display(['       ',num2str(toc(lastTime),3), ' sec']) ; display('---------------------------------') ; end
-
-    
-    
-    
-    
-    
-% ===================================================================================================================    
-% FUNCTIONS FOR ESPRIT
-% ===================================================================================================================
-
-% HANKEL MATRIX SIZES
-    function setHankelSize()
-        % Spatial smoothing ratio M/L
-            if numel(M_L)==1 ; M_L = M_L*ones(1,length(DIMS_K)) ; end
-            M_L = max(M_L,1./Lk) ; % avoids M=0
-            M_L = min(M_L,1-1./Lk) ; % avoids K=0
-            %M_L = max(M_L,1-M_L) ; % uses the symmetry to M=L/2 to minimize K
-        % Sub-grids size
-            Kk = floor((1-M_L).*Lk./DECIM_K + 1) ; zeros([1 length(DIMS_K)]) ; % max size of (signal+noise) subspace
-        % When Decimation, force the spatial smoothing to use all data
-            decimAndNoSS = Lk-(Kk-1).*DECIM_K<DECIM_K ;
-            Kk(decimAndNoSS) = Kk(decimAndNoSS)-1 ;
-        Mk = Lk - DECIM_K.*(Kk-1) ;
-        Kk(isCOS) = floor(Kk(isCOS)/2) ;
+    function out = get.Mk(this) 
+    % Number of spatial smoothing snapshots
+        k = this.Kk ;
+        k(this.isCOS) = k(this.isCOS)*2 ;
+        out = this.Lk - this.DECIM_K.*(k-1) ;
     end
+end
 
-% SUB-HANKEL MATRICES INDICES
-    function subHankelInd()
-        subIndH = cell(length(DIMS_K),n_indHbH) ;
-        for d = 1:length(DIMS_K)
-            switch lower(FUNC(d,:))
+
+%% HANKEL MATRIX INDICES
+methods
+    function nh = nSubHankelMat(this,fun)
+        if nargin<2 ; fun = this.FUNC ; end
+        nh = any(ismember(fun,'cos'))+1 ; 
+    end
+    
+    function IND = hankelSubIndices(this,k,m,s,fun)
+    % Indices of hankel matrices associated to individual signal dimensions
+        if nargin<2 ; k = this.Kk ; end
+        if nargin<3 ; m = this.Mk ; end
+        if nargin<4 ; s = this.DECIM_K ; end
+        if nargin<5 ; fun = this.FUNC ; end
+    % Sub indices
+        nD = numel(k) ;
+        IND = cell(nD,this.nSubHankelMat(fun)) ; % cell array of [Kk(d) Mk(d)] indices
+        for d = 1:nD
+            switch lower(fun{d})
                 case 'exp'
-                    subIndH{d,1} = (1:DECIM_K(d):DECIM_K(d)*(Kk(d)-1)+1)'*ones(1,Mk(d)) + ones(Kk(d),1)*(0:Mk(d)-1) ;
+                    IND{d,1} = s(d)*(0:k(d)-1)' + (0:m(d)-1) + 1 ;
                 case 'cos'
-                    subIndH{d,1} = ((Kk(d)-1)*DECIM_K(d)+1:-DECIM_K(d):1)'*ones(1,Mk(d)) + ones(Kk(d),1)*(0:Mk(d)-1) ;
-                    subIndH{d,2} = (Kk(d)*DECIM_K(d):DECIM_K(d):DECIM_K(d)*(2*Kk(d)-1))'*ones(1,Mk(d)) + ones(Kk(d),1)*(1:Mk(d)) ;
+                    IND{d,1} = s(d)*(k(d)-1:-1:0)' + (0:m(d)-1) + 1 ;
+                    IND{d,2} = s(d)*(k(d):1:2*k(d)-1)' + (1:m(d)) + 1 ;
             end
         end
     end
-
-% HbH INDICES FOR EACH DIMENSION
-    function indicesHbH_d()
-        indHbH_d = cell(length(DIMS_K),n_indHbH) ;
-        D = 1:length(DIMS_K) ;
-        for d = 1:length(D)
-            switch lower(FUNC(d,:))
+    
+    function IND = blockHankelSubIndices(this,k,m,s,fun)
+    % Block Hankel matrix sub-indices (with kronecker struture) associated to each signal dimension
+        if nargin<2 ; k = this.Kk ; end
+        if nargin<3 ; m = this.Mk ; end
+        if nargin<4 ; s = this.DECIM_K ; end
+        if nargin<5 ; fun = this.FUNC ; end
+    % Sub indices
+        HI = this.hankelSubIndices(k,m,s,fun) ;
+    % All Indices
+        nD = numel(k) ;
+        IND = cell(nD,this.nSubHankelMat(fun)) ; % cell array of [prod(Kk) prod(Mk)] indices
+        for d = 1:nD
+            switch lower(fun{d})
                 case 'exp'
-                    indHbH_d{d,1} = repmat(subIndH{d,1},[prod(Kk(D<d)), prod(Mk(D<d))]) ;
-                    indHbH_d{d,1} = kron(indHbH_d{d,1},ones([prod(Kk(D>d)), prod(Mk(D>d))])) ;
+                    IND{d,1} = repmat(HI{d,1},[prod(k(1:d-1)) prod(m(1:d-1))]) ;
+                    IND{d,1} = repelem(IND{d,1},prod(k(d+1:end)),prod(m(d+1:end))) ;
                 case 'cos'
                     for i = 1:2
-                        indHbH_d{d,i} = repmat(subIndH{d,i},[prod(Kk(D<d)), prod(Mk(D<d))]) ;
-                        indHbH_d{d,i} = kron(indHbH_d{d,i},ones([prod(Kk(D>d)), prod(Mk(D>d))])) ;
+                        IND{d,i} = repmat(HI{d,i},[prod(k(1:d-1)) prod(m(1:d-1))]) ;
+                        IND{d,i} = repelem(IND{d,i},prod(k(d+1:end)),prod(m(d+1:end))) ;
                     end
             end
         end
     end
-
-% HANKEL-BLOCK-HANKEL MATRIX INDICES
-    function indicesHbH
-        % Decimation in the isosurface points
-            indP = 1:size(Signal,1) ;
-            if any(DECIM_P~=1)
-                indP = (1:DECIM_P(1):Lp(1))' ;
-                D = 1:length(DIMS_P) ;
-                for d = 2:length(DECIM_P)
-                    indP_d = (1:DECIM_P(d):Lp(d))' ;
-                    indP = repmat(indP,[length(indP_d) 1]) + kron((indP_d-1)*prod(Lp(D<d)),ones(length(indP),1)) ;
+    
+    function IND = blockHankelIndices(this,k,m,s,fun)
+    % Block Hankel matrix LINEAR indices
+        if nargin<2 ; k = this.Kk ; end
+        if nargin<3 ; m = this.Mk ; end
+        if nargin<4 ; s = this.DECIM_K ; end
+        if nargin<5 ; fun = this.FUNC ; end
+    % Cummulative numer of elements before the dimension
+        lk = m + (k-1).*s ;
+        clk = cumprod(lk) ;
+    % First dimension
+        bHSI = this.blockHankelSubIndices(k,m,s,fun) ;
+        IND = bHSI(1,:) ;
+    % Other dimensions
+        nD = numel(k) ;
+        if nD>1
+        % EXPONENTIALS
+            for d = 2:nD
+                IND{1} = IND{1} + (bHSI{d}-1)*clk(d-1) ;
+            end
+        % COSINES (IF NEEDED)
+            ic = ismember(fun,'cos') ;
+            if any(ic)
+                for d = 2:nD
+                    IND{2} = IND{2} + (bHSI{d,1+ic(d)}-1)*clk(d-1) ;
                 end
             end
-        % HbH INDICES
-            if size(indHbH_d,2)==1 % ONLY EXPONENTIALS SEARCHED
-                n_indHbH = 1 ;
-                indHbH{1} = indHbH_d{1,1} ;
-                D = 1:length(DIMS_K) ;
-                for d = 2:length(DIMS_K)
-                    indHbH{1} = indHbH{1} + (indHbH_d{d}-1)*prod(Lk(D<d)) ;
-                end
-            else % SOME COSINUS SEARCHED
-                    indHbH = {indHbH_d{1,:}} ;
-                    D = 1:length(DIMS_K) ;
-                    for d = 2:length(DIMS_K)
-                        indHbH{1} = indHbH{1} + (indHbH_d{d,1}-1)*prod(Lk(D<d)) ;
-                        if n_indHbH==2
-                            if isCOS(d)
-                                indHbH{2} = indHbH{2} + (indHbH_d{d,2}-1)*prod(Lk(D<d)) ;
-                            else
-                                indHbH{2} = indHbH{2} + (indHbH_d{d,1}-1)*prod(Lk(D<d)) ;
-                            end
+        end
+    end
+end
+
+
+%% INDICES FOR SHIFT INVARIANCE
+methods
+    function [indUp,indDwn1,indDwn2] = shiftIndices(this,shift)
+    % Build the vector of selection indices corresponding to a shift invariance
+        shift_dims = find(shift) ;
+        isShiftCOS = any(this.isCOS.*shift) ; % Cosinus searched in the shift ?
+    % Subindices of the first colon of the H-b-H matrix
+        k = this.Kk ;
+        dK = this.DECIM_K ;
+        hsi = this.blockHankelSubIndices(k,k*0+1,dK) ;
+    % Indices Up
+        indUp = true(size(hsi{1})) ; 
+        if isShiftCOS % Cosinus searched in the shift
+            indTrUp = true(size(hsi{1})) ; 
+        end
+        for d = shift_dims
+            switch lower(this.FUNC{d})
+                case 'exp'
+                    if shift(d)>0 ; indUp = indUp & (hsi{d,1}<=(k(d)-shift(d))*dK(d)) ; end
+                    if shift(d)<0 ; indUp = indUp & (hsi{d,1}>-shift(d)*dK(d)) ; end
+                case 'cos'
+                    indTrUp = indTrUp & (hsi{d,1}<=(k(d)-shift(d))*dK(d)) ;
+                    indTrUp = indTrUp & (hsi{d,1}>shift(d)*dK(d)) ;
+            end
+        end
+    % Indices Down
+        indDwn = true(size(hsi{1})) ; 
+        if isShiftCOS % Cosinus searched in the shift
+            indTrDwn1 = true(size(hsi{1})) ; 
+            indTrDwn2 = true(size(hsi{1})) ; 
+        end
+        for d = shift_dims
+            switch lower(this.FUNC{d})
+                case 'exp'
+                    if shift(d)>0 ; indDwn = indDwn & (hsi{d,1}>shift(d)*dK(d)) ; end
+                    if shift(d)<0 ; indDwn = indDwn & (hsi{d,1}<=(k(d)+shift(d))*dK(d)) ; end
+                case 'cos'
+                    indTrDwn1 = indTrDwn1 & (hsi{d,1}<=(k(d)-2*abs(shift(d)))*dK(d)) ;
+                    indTrDwn2 = indTrDwn2 & (hsi{d,1}>2*abs(shift(d))*dK(d)) ;
+            end
+        end
+    % Combine Indices
+        if isShiftCOS % Cosinus searched in the shift
+            indUp = indUp & indTrUp ;
+            indDwn1 = indDwn & indTrDwn1 ;
+            indDwn2 = indDwn & indTrDwn2 ;
+        else % Only exponentials in the shift
+            indDwn1 = indDwn ;
+            indDwn2 = [] ;
+        end
+    end
+    
+    function [Jup,Jdwn] = selectionMatrices(this,shift)
+    % Selection matrices corresponding to a shift
+        I = speye(prod(this.Kk)) ;
+        [indUp,indDwn1,indDwn2] = shiftIndices(this,shift) ;
+        % Jup
+            Jup = I(indUp,:) ;
+        % Jdwn
+            Jdwn = I(indDwn1,:) ;
+            if any(this.isCOS.*shift) % Cosinus searched in the shift
+                Jdwn = ( Jdwn + I(indDwn2,:) )/2 ;
+            end
+    end
+end
+
+
+%% SIGNAL RESHAPING
+methods
+    function S = reshapedSignal(this,S)
+    % Return the reshaped version of the signal
+        if nargin<2 ; S = this.Signal ; end
+        S = permute(S,[this.DIMS_K this.DIMS_P]) ;
+        S = reshape(S,[prod(this.Lk) prod(this.Lp)]) ;
+    end
+    
+    function d = permDims(this)
+    % Permutation dimensions of the Signal<->reshapedSignal
+        d = sort([this.DIMS_K this.DIMS_P]) ;
+    end
+end
+
+
+%% COVARIANCE
+methods
+    function indP = modeIndices(this)
+    % Return the points included in the hankel signal matrix
+    % Decimation of the isosurface/modes/amplitudes points
+        dP = this.DECIM_P ;
+        if any(dP~=1) % SOME DECIMATION IS NEEDED
+            lp = this.Lp ;
+            clp = cumprod(lp) ;
+            indP = 1:dP(1):lp(1) ;
+            for d = 2:length(dP)
+                indP = indP(:) + clp(d-1)*(0:dP(d):lp(d)-1) ;
+            end
+            indP = reshape(indP,1,[]) ;
+        else % NO DECIMATION
+            indP = 1:prod(size(this.Signal,this.DIMS_P)) ;
+        end
+    end
+    
+    function Hs = signalMatrix(this,S,iHbH)
+    % Return the H-b-H signal matrix 
+        if nargin<2 ; S = this.Signal ; end
+        if nargin<3 ; iHbH = this.blockHankelIndices ; end
+    % Take the signal decimated on points
+        S = this.reshapedSignal(S) ;
+        S = S(:,this.modeIndices) ;
+    % Build the Hankel matrix
+        if any(this.Mk~=1) % Mk~=1, spatial smoothing
+            Hs = S(iHbH{1},indP) ;
+            for i = 2:numel(iHbH) ; Hs = Hs + S(iHbH{i},indP) ; end
+        else % Mk==1, no spatial smoothing (multiple snapshots case)
+            Hs = S ;
+        end
+    % Reshape size: [prod(Kk) prod(Mk)*numel(indP)]
+        Hs = reshape(Hs,prod(this.Kk),[]) ;
+    end
+    
+    function Css = covarianceMatrix(this,S,iHbH,method)
+    % Compute the covariance matrix of the signal
+        if nargin<2 ; S = this.Signal ; end
+        if nargin<3 ; iHbH = this.blockHankelIndices ; end
+        if nargin<4 ; method = 'prod' ; end
+        k = this.Kk ; m = this.Mk ;
+    % Take the signal decimated on points
+        S = this.reshapedSignal(S) ;
+        S = S(:,this.modeIndices) ;
+    % Compute Css
+        if any(m~=1) % Mk~=1, spatial smoothing
+        % H-b-H indices
+            S = S/numel(iHbH) ;
+        % Covariance Css=Hs*Hs'
+            switch method
+                case 'prod' % Sum the elementary Css matrices by points of isosurface
+                    Css = zeros(prod(k)) ;
+                    %t = tic ; 
+                    for p = 1:size(S,2)
+                        H = S(iHbH{1},p) ;
+                        for i = 2:numel(iHbH)
+                            H = H + S(iHbH{i},p) ;
                         end
+                        H = reshape(H,prod(k),[]) ;
+                        Css = Css + H*H' ;
+                        %if length(indP)>1 && p==1 && this.DEBUG ; disp(['       estim: ',num2str(toc(t)*length(indP)),' secs']) ; end
                     end
+                case 'conv' % use convolution
+                    error('Convolution is not implemented yet.') ;
             end
+        else % Mk==1, no spatial smoothing (multiple snapshots case)
+            Css = S*S' ;
+        end
     end
+end
 
-% BUILD THE CSS MATRIX
-    function Css = buildCss()
-        % Build the covariance matrix
-            if any(Kk~=Lk) % Mk~=1, spatial smoothing
-                if 0 %length(Kk)==1 && sum(isCOS)==0 % 1D exp case, convolution
-                    % Signal vector
-                        sig = Signal(indP,indHbH{1}(:)) ;
-                        for i = 2:n_indHbH
-                            sig = sig + Signal(indP,indHbH{i}(:)) ;
-                        end
-                        sig = sig/n_indHbH ;
-                        sig = sig.' ; % now size(sig)=[Kk*Mk length(indP)]
-                    % Signal Matrix
-                        SIG = reshape(sig,[Kk Mk length(indP)]) ;
-                else % N-D Case
-                    % Sum the elementary Css matrices by points of isosurface
-                        Css = zeros(prod(Kk),prod(Kk)) ;
-                        t = tic ; 
-                        for p = 1:length(indP)
-                            sig = Signal(indP(p),:) ;
-                            SIG = sig(indHbH{1}) ;
-                            for i = 2:n_indHbH
-                                SIG = SIG + sig(indHbH{i}) ;
-                            end
-                            SIG = SIG/n_indHbH ;
-                            Css = Css + SIG*SIG' ;
-                            if length(indP)>1 && p==1 && DEBUG ; disp(['       estim: ',num2str(toc(t)*length(indP)),' secs']) ; end
-                        end
-                end
-            else % Mk==1, no spatial smoothing (multiple snapshots case)
-                SIG = Signal.' ;
-                Css = SIG*SIG' ;
+
+%% SIGNAL ORDER CRITERION
+methods
+    function R = signalOrder(this,R0,W,lambda,criterion,thrs)
+    % Return the signal order given by a criterion
+        if nargin<2 ; R0 = this.R0 ; end
+        if numel(R0)==1 ; R = R0 ; return ; end
+        if nargin<4 ; [W,lambda] = this.signalSubspace(max(R0)+1) ; end
+        if nargin<5 ; criterion = this.CRITERION ; end
+        if nargin<6 ; thrs = this.CRIT_THRS ; end
+    % Compute the criterion
+        switch upper(criterion)
+            case 'MDL'
+                crit = this.mdl(lambda) ;
+            case 'ESTER'
+                crit = this.ester(W,this.SHIFTS) ;
+            case 'SAMOS'
+                crit = this.samos(W,this.SHIFTS) ;
+        end
+    % Mean over shifts
+        crit = prod(crit,1) ;
+    % Select the signal order
+        crit = crit(R0) ;
+        r = find(crit>=max(crit)*thrs,1,'last') ;
+        R = R0(r) ;
+    end
+    
+    function m = mdl(this,lambda)
+    % Minimum Definition Length criterion
+        if nargin<2 ; [~,lambda] = signalSubspace(this) ; end
+        %m = -diff(lambda)./lambda(1:end-1) ;
+        m = lambda(1:end-1)./lambda(2:end) ;
+        m = m(:)' ;
+    end
+    
+    function err = ester(this,W,shifts)
+    % ESTimation of ERror
+        if nargin<2 ; W = this.signalSubspace ; end
+        if nargin<3 ; shifts = this.SHIFTS ; end
+        err = NaN(size(shifts,1),size(W,2)) ;
+        for r = 1:size(W,2)
+            Wr = W(:,1:r) ;
+            for s = 1:size(shifts,1)
+                [Wup,Wdwn,F] = this.spectralMatrix(shifts(s,:),Wr) ;
+                err(s,r) = 1/norm(Wup*F-Wdwn) ;
             end
-        % Normalize
-            %Css = Css/(prod(Mk)*length(indP)) ;
+        end
     end
 
-
-% BUILD THE HSS MATRIX
-    function Hss = buildHss(Data)
-            if any(Kk~=Lk) % Mk~=1, spatial smoothing
-                % Stack The HbH matrices by points of isosurface
-                    Hss = zeros(prod(Kk),prod(Mk)*length(indP)) ;
-                    for p = 1:length(indP)
-                        sig = Data(indP(p),:) ;
-                        SIG = sig(indHbH{1}) ;
-                        for i = 2:n_indHbH
-                            SIG = SIG + sig(indHbH{i}) ;
-                        end
-                        SIG = SIG/n_indHbH ;
-                        Hss(1:prod(Kk),(1:prod(Mk))+(p-1)*prod(Mk)) = SIG ;
-                    end
-            else % Mk==1, no spatial smoothing (multiple snapshots case)
-                Hss = Data(indP,:).' ;
+    function err = samos(this,W,shifts)
+    % Subspace Automatic Model Order Selection
+        if nargin<2 ; W = this.signalSubspace ; end
+        if nargin<3 ; shifts = this.SHIFTS ; end
+        err = NaN(size(shifts,1),size(W,2)) ;
+        for r = 1:size(W,2)
+            Wr = W(:,1:r) ;
+            for s = 1:size(shifts,1)
+                [Wup,Wdwn] = this.spectralMatrix(shifts(s,:),Wr) ;
+                S = [Wup Wdwn] ;
+                g = sqrt(real(sort(eig(S'*S,'vector')))) ;
+                err(s,r) = r/sum(g(1:r)) ;
             end
+        end
     end
+end
 
 
-% SELECTION INDICES (AND MATRICES OPTIONALLY)
-    function [indUp,indDwn1,indDwn2,Jup,Jdwn] = selectMatrices(shift)
-            % Infos
-                D = 1:length(shift) ;
-                shift_dims = D(shift~=0) ;
-            % Indices Up
-                indUp = true(size(indHbH_d{1,1},1),1) ; 
-                if any(isCOS.*shift) ; indTrUp = true(size(indHbH_d{1,1},1),1) ; end
-                for d = shift_dims
-                    switch lower(FUNC(d,:))
-                        case 'exp'
-                            if shift(d)>0 ; indUp = indUp & (indHbH_d{d,1}(:,1)<=(Kk(d)-shift(d))*DECIM_K(d)) ; end
-                            if shift(d)<0 ; indUp = indUp & (indHbH_d{d,1}(:,1)>-shift(d)*DECIM_K(d)) ; end
-                        case 'cos'
-                            indTrUp = indTrUp & (indHbH_d{d,1}(:,1)<=(Kk(d)-shift(d))*DECIM_K(d)) ;
-                            indTrUp = indTrUp & (indHbH_d{d,1}(:,1)>shift(d)*DECIM_K(d)) ;
-                    end
-                end
-            % Indices Down
-                indDwn = true(size(indHbH_d{1,1},1),1) ; 
-                if any(isCOS.*shift) 
-                    indTrDwn1 = true(size(indHbH_d{1,1},1),1) ; 
-                    indTrDwn2 = true(size(indHbH_d{1,1},1),1) ; 
-                end
-                for d = shift_dims
-                    switch lower(FUNC(d,:))
-                        case 'exp'
-                            if shift(d)>0 ; indDwn = indDwn & (indHbH_d{d,1}(:,1)>shift(d)*DECIM_K(d)) ; end
-                            if shift(d)<0 ; indDwn = indDwn & (indHbH_d{d,1}(:,1)<=(Kk(d)+shift(d))*DECIM_K(d)) ; end
-                        case 'cos'
-                            indTrDwn1 = indTrDwn1 & (indHbH_d{d,1}(:,1)<=(Kk(d)-2*abs(shift(d)))*DECIM_K(d)) ;
-                            indTrDwn2 = indTrDwn2 & (indHbH_d{d,1}(:,1)>2*abs(shift(d))*DECIM_K(d)) ;
-                    end
-                end
-            % Combine Indices
-                if any(isCOS.*shift) % Cosinus searched in the shift
-                    indUp = indUp & indTrUp ;
-                    indDwn1 = indDwn & indTrDwn1 ;
-                    indDwn2 = indDwn & indTrDwn2 ;
-                else % Only exponentials in the shift
-                    indDwn1 = indDwn ;
-                    indDwn2 = [] ;
-                end
-            % Build selection MATRICES
-                if nargout>3 % If Jup and Jdwn are needed
-                    I = speye(prod(Kk)) ;
-                    % Jup
-                        Jup = I(indUp,:) ;
-                    % Jdwn
-                        Jdwn = I(indDwn1,:) ;
-                        if any(isCOS.*shift) % Cosinus searched in the shift
-                            Jdwn2 = I(indDwn2,:) ;
-                            Jdwn = (Jdwn + Jdwn2)/2 ;
-                        end
-                end
+%% SIGNAL SUBSPACE
+methods
+    function [W,lambda] = signalSubspace(this,R,method)
+    % Estimate the signal subspace
+        if nargin<2 ; R = max(this.R0)+1 ; end
+        if nargin<3 ; method = this.SOLVER ; end
+    % Compute the signal covariance
+        Css = this.covarianceMatrix ;
+    % Adjust signal order candidates
+        R = min(R,size(Css,1)-1-max(sum(abs(this.SHIFTS),2))) ;
+    % ESTIMATION
+        switch method
+            case 'eig' % Re-compute the COMPLETE decomposition
+                [W,lambda] = eig(Css,'vector') ;
+            case 'eigs'  % Re-compute the signal subspace ONLY
+                [W,lambda] = eigs(Css,R,'lm') ;
+                lambda = diag(lambda) ;
+            case 'follow' % Approximate with one QR iteration (Badeau-style)
+                Cxy = Css*this.W0 ;
+                [W,~] = qr(Cxy,0) ;
+                lambda = diag(W'*Css*W) ;
+        end
+    % SORT EIGENVALUES IN DESCENDING ORDER
+        [~,ind] = sort(lambda,'descend') ;
+        lambda = lambda(ind) ;
+        W = W(:,ind) ;
+    % KEEP ONLY THE HIGHEST E.V
+        W = W(:,1:R) ; 
+        lambda = lambda(1:R) ;
     end
-        
-        
-% MATRICES F (SHIFT INVARIANCE EVAL.)
-    function [Wup,Wdwn,F] = computeF(r,s)
-        % Get indices
-            shift = SHIFTS(s,:) ;
-            [indUp,indDwn1,indDwn2] = selectMatrices(shift) ;
-        % R first eigenvectors
-            Wp = W(:,1:R0(r)) ;
-        % W_up and W_down construction
-            if any(isCOS.*shift) 
-                Wup = Wp(indUp,:) ;
-                Wdwn = (Wp(indDwn1,:) + Wp(indDwn2,:))/2 ;
-            else
-                Wup = Wp(indUp,:) ;
-                Wdwn = Wp(indDwn1,:) ;
+end
+
+
+%% SHIFT INVARIANCE
+methods
+    function [Wup,Wdwn,F] = spectralMatrix(this,shift,W)
+    % Return the spectral matrix associated to a given shift
+        if nargin<3 ; W = this.signalSubspace ; end
+        R = size(W,2) ;
+    % Get shift indices
+        [indUp,indDwn1,indDwn2] = this.shiftIndices(shift) ;
+    % W_up and W_down construction
+        if any(this.isCOS.*shift) 
+            Wup = W(indUp,:) ;
+            Wdwn = ( W(indDwn1,:) + W(indDwn2,:) )/2 ;
+        else
+            Wup = W(indUp,:) ;
+            Wdwn = W(indDwn1,:) ;
+        end
+    % Only the Wup and Wdwn matrices needed ?
+        if nargout==2 ; return ; end
+    % Shift invariance evaluation
+        switch this.FIT
+            case 'LS' % Least-Squares
+                F = Wup\Wdwn ;
+            case 'TLS' % Total Least-Squares
+                [E,~] = svd([Wup' ; Wdwn']*[Wup Wdwn],0) ;
+                F = -E(1:R,R+(1:R))/E(R+(1:R),R+(1:R)) ;
+            case 'TLS2' % TLS with less correlation between samples (experimental)
+                L_2 = floor(this.Lk./2) ;
+                Wup = W(1:2:L_2*2,:) ;
+                Wdwn = W(2:2:L_2*2,:) ;
+                [E,~] = svd([Wup' ; Wdwn']*[Wup Wdwn],0) ;
+                F = -E(1:R,R+(1:R))/E(R+(1:R),R+(1:R)) ;
+        end
+    end
+end
+
+
+%% POLE EXTRACTION
+methods
+    function [K,T,Beta] = extractPoles(this,W,R,shifts)
+    % Extract the wavevectors from the signal
+        if nargin<2 ; [W,lambda] = this.signalSubspace ; end
+        if nargin<3 ; R = this.signalOrder(this.R0,W,lambda) ; end
+        if nargin<4 ; shifts = this.SHIFTS ; end
+        nS = size(shifts,1) ;
+    % Evaluation of all shift invariances
+        W = W(:,1:R) ;
+        F = zeros(R,R,nS) ;
+        for s = 1:nS
+            [~,~,F(:,:,s)] = this.spectralMatrix(shifts(s,:),W) ;
+        end
+    % Evaluation of PHI
+        if nS==1 % One shift, simple diagonalization
+            [T,PI] = eig(F,'vector') ;
+            Beta = 1 ;
+        else % More than one shift, joint diagonalization 
+        % with a linear combination of F's
+        % Coefficients of the linear combination
+            Beta = 1 + 1.2.^(0:nS-1) ;
+            Beta = reshape(Beta/sum(Beta),[1 1 nS]) ;
+        % Combined spectral matrix
+            Ft = sum(F.*Beta,3) ;
+        % Joint transfer matrix
+            [T,~] = eig(Ft) ;
+        % Pole matrix
+            PI = zeros([R nS]) ;
+            for s = 1:nS
+                PI(:,s) = diag(T\F(:,:,s)*T) ;
             end
-        % Only the Wup and Wdwn matrices needed ?
-            if nargout==2 ; return ; end
-        % Shift invariance evaluation
-            switch FIT
-                case 'LS'
-                    F = Wup\Wdwn ;
-                case 'TLS'
-                    [E,~] = svd([Wup' ; Wdwn']*[Wup Wdwn],0) ;
-                    F = -E(1:R0(r),R0(r)+(1:R0(r)))/E(R0(r)+(1:R0(r)),R0(r)+(1:R0(r))) ;
-                case 'TLS2'
-                    L_2 = floor(Lk./2) ;
-                    Wup = Wp(1:2:L_2*2,:) ;
-                    Wdwn = Wp(2:2:L_2*2,:) ;
-                    [E,~] = svd([Wup' ; Wdwn']*[Wup Wdwn],0) ;
-                    F = -E(1:R0(r),R0(r)+(1:R0(r)))/E(R0(r)+(1:R0(r)),R0(r)+(1:R0(r))) ;
-            end
+        end
+    % Signal Poles
+        Z = reshape(PI,[R nS]).' ;
+    % Wavevectors in the SHIFT basis
+        shiftsCOS = any(this.isCOS.*shifts,2) ;
+        K = zeros(size(Z)) ;
+        K(~shiftsCOS,:) = log(Z(~shiftsCOS,:))/1i ; % FUNC = 'EXP' ;
+        K(shiftsCOS,:) = acos(Z(shiftsCOS,:)) ; % FUNC = 'COS' ;
+    % Wavevectors in the cartesian basis
+        K = (shifts.*this.DECIM_K)\K ;
     end
-
-
-% ESTER CRITERION
-    function err = ester(r,s)
-        [Wup,Wdwn,F] = computeF(r,s) ;
-        err = 1/norm(Wup*F-Wdwn) ;
+end
+    
+    
+%% AMPLITUDES/MODES ESTIMATION
+methods
+    function V = vandermondeMatrix(this,K,L) 
+    % Build the vandermonde matrix of the signal
+    % Here, decimation factors are no longer taken into account
+        if nargin<2 ; K = this.extractPoles ; end
+        if nargin<3 ; L = this.Lk ; end
+        nD = numel(L) ;
+    % Indices
+        indV = zeros(prod(L),nD) ;
+        for d = 1:nD
+            indV(:,d) = repelem(repmat(0:L(d)-1,[1 prod(L(d+1:end))]),prod(L(1:d-1))) ;
+        end
+    % Wavevectors
+        if any(this.isCOS) % Cosinuses searched, extended Vandermonde matrix
+            K = kron( [1 (0.5-this.isCOS.')*2] ,K)  ; % [nD 2*nK]
+        end
+    % Vandermonde
+        K = permute(K,[3 2 1]) ; % [1 nK nD]
+        indV = permute(indV,[1 3 2]) ; % [prod(L) 1 nD]
+        V = exp(1i*sum(indV.*K,3)) ; % [prod(L) nK]
     end
-
-
-% SAMOS CRITERION
-    function err = samos(r,s)
-        [Wup,Wdwn] = computeF(r,s) ;
-        S = [Wup Wdwn] ;
-        g = real(sort(sqrt(eig(S'*S,'vector')))) ;
-        %g = flip(svd(S)) ;
-        E = sum(g(1:R0(r)))/R0(r) ;
-        err = 1/E ;
+    
+    function [A,v0] = extractAmplitudes(this,V)
+    % Extract the exponential amplitudes from the signal
+    % Here, decimation factors are no longer taken into account
+        if nargin<2 ; V = this.vandermondeMatrix() ; end
+    % Shift for the conditionning
+        v0 = max(abs(V),[],1) ;
+        V = V*diag(1./v0) ;
+    % Amplitude estimation
+        A = V\this.reshapedSignal ;
+    % Vandermonde Shift compensation
+        A = diag(1./v0)*A ;
     end
-
-
-% WAVEVECTORS K EXTRACTION
-    function [T,Beta] = extractPoles(r)
-        % Evaluation of all shift invariances
-            F = zeros(R0(r),R0(r),size(SHIFTS,1)) ;
-            for s = 1:size(SHIFTS,1)
-                [~,~,F(:,:,s)] = computeF(r,s) ;
-            end
-        % Evaluation of PHI
-            if size(SHIFTS,1)==1 % One shift, simple diagonalization
-                [T,PI] = eig(F) ;
-                Beta = 1 ;
-            else % More than one shift, joint diagonalization
-                % Jacobi angles (fails when there is multiplicity)
-                    if 0
-                        Ft = reshape(F,size(F,1),[]) ;
-                        [~,PHI] = joint_diag(Ft,1e-8) ;
-                    end
-                % Linear combination of F's
-                    if 1
-                        Beta = 1 + 1.2.^(0:size(SHIFTS,1)-1) ;
-                        Beta = Beta/sum(Beta) ;
-                        Ft = sum(F.*repmat(reshape(Beta,[1 1 length(Beta)]),[size(F,1) size(F,2) 1]),3) ;
-                        [T,~] = eig(Ft) ;
-                        PI = zeros(size(Ft).*[1 size(SHIFTS,1)]) ;
-                        for s = 1:size(SHIFTS,1)
-                            PI(:,(s-1)*size(F,2)+(1:size(F,2))) = T\F(:,:,s)*T ;
-                        end
-                    end
-            end
-        % Signal Poles
-            indDiag = repmat(eye(R0(r)),[1 size(SHIFTS,1)])==1 ;
-            Z = reshape(PI(indDiag),[R0(r) size(SHIFTS,1)]).' ;
-        % Wavevectors in the SHIFT basis
-            shiftsCOS = any(logical(repmat(isCOS(:)',[size(SHIFTS,1) 1])).*SHIFTS,2) ;
-            K = zeros(size(Z)) ;
-            K(~shiftsCOS,:) = log(Z(~shiftsCOS,:))/1i ; % FUNC = 'EXP' ;
-            K(shiftsCOS,:) = acos(Z(shiftsCOS,:)) ; % FUNC = 'COS' ;
-        % Wavevectors in the cartesian basis
-            K = (SHIFTS*diag(DECIM_K))\(K) ;
+    
+    function [U,PHI] = extractModes(this,A) 
+    % Extract the modes from the signal
+    % Here, decimation factors are no longer taken into account
+        if nargin<2 ; A = this.extractAmplitudes() ; end
+    % Reshaping
+        lp = this.Lp ;
+        nK = size(V,2) ;
+        if ~any(this.isCOS) % No cosinuses, no phases to estimate
+            U = reshape(A.',[lp nK]) ;
+            if nargout>1 ; PHI = zeros(size(U)) ; end
+        else
+            Bplus = A(1:end/2,:) ;
+            Bminus = A(end/2+1:end,:) ;
+            U = reshape(2*sqrt(Bplus.*Bminus).',[lp nK]) ;
+            PHI = reshape(1i/2*log(Bminus./Bplus).',[lp nK]) ;
+        end
     end
+end
 
 
-
-% VANDERMONDE MATRIX
-    function buildVandermonde(L) % Here, decimation factors are no longer taken into account
-        % Indices
-            indV = zeros(prod(L),length(L)) ;
-            D = 1:length(DIMS_K) ;
-            for d = 1:length(D)
-                indV(:,d) = kron(repmat((1:L(d))',[prod(L(D>d)) 1]),ones([prod(L(D<d)) 1])) - 1 ;
-            end
-        % Wavevectors
-            if ~any(isCOS) % No cosinuses, normal Vandermonde matrix
-                Kt = K ;
-            else % Cosinuses searched, extended Vnadermonde matrix
-                Kt = [K bsxfun(@times,double(~isCOS(:)),K)-bsxfun(@times,double(isCOS(:)),K)] ;
-            end
-        % Vandermonde
-            Kt = permute(Kt,[3 2 1]) ;
-            indV = permute(indV,[1 3 2]) ;
-            V = exp(1i*sum(bsxfun(@times,indV,Kt),3)) ;
+%% SIGNAL MODEL
+methods
+    function SM = signalModel(this,V,A,reshp)
+    % Compute the signal model from the extracted data
+        if nargin<2 ; V = this.vandermondeMatrix ; end
+        if nargin<3 ; A = this.extractAmplitudes(V) ; end 
+        if nargin<4 ; reshp = true ; end
+    % Model of this.reshapedSignal
+        SM = V*A ;
+    % Model of this.Signal
+        if reshp
+            SM = permute(reshape(SM,[this.Lk this.Lp]),this.permDims) ; 
+        end
     end
+end
 
 
-% AMPLITUDES U RETRIEVAL
-    function computeU % Here, decimation factors are no longer taken into account
-        % Vandermonde Matrix
-            if isempty(V) ; buildVandermonde(Lk) ; end
-        % Shift for the conditionning
-            %v0 = max(abs(V),[],1) ;
-            %V = V*diag(1./v0) ;
-        % Signal reshaping
-            S = Signal.' ;
-        % Amplitude estimation
-            A = V\S ;
-        % Vandermonde Shift compensation
-            %A = diag(1./v0)*A ;
-        % Reshaping
-            if ~any(isCOS) % No cosinuses, no phases to estimate
-                U = reshape(A.',[Lp , size(K,2)]) ;
-            else
-                Bplus = A(1:end/2,:) ;
-                Bminus = A(end/2+1:end,:) ;
-                U = reshape(2*sqrt(Bplus.*Bminus).',[Lp , size(K,2)]) ;
-                PHI = reshape(1i/2*log(Bminus./Bplus).',[Lp , size(K,2)]) ;
-            end
-    end
-
-% SIGNAL MODEL CONSTRUCTION
-    function computeSignalModel()
-        if isempty(V) ; computeU() ; end
-        SignalModel = (V*A).' ;
-        dS = Signal-SignalModel ;
-    end
-
-
-% UNCERTAINTY ESTIMATION dK
-    function computeUncertainties
-        % OPTIONS (hard-coded for now)
-            hugeData = true ; % handles huge Data by dividing the data at points
-            estimate =   'std' ... % Standard Deviation
+%% UNCERTAINTY QUANTIFICATION
+methods
+    function opts = uncertaintyOptions(this)
+    % Options for the estimation of uncertainties
+    % HARD-CODED FOR NOW
+        opts.hugeData = true ; % handles huge Data by dividing the data at points
+        opts.estimate =   'std' ... % Standard Deviation
                         ... 'delta' ... % Sensibility or perturbation
                         ;
-            lin_method =     'conv' ... % Linearization method for the variance:
+        opts.lin_method =     'conv' ... % Linearization method for the variance:
                             ... 'kron'...
                             ... 'none'...  
-                        ;
-            covar_estim =   ... 'uniform' ... % Estimation of the perturbation covariance: 
+                            ;
+        opts.covar_estim =   ... 'uniform' ... % Estimation of the perturbation covariance: 
                              'diagonal' ...
                             ;
-            formulation =   ... 'analytic' ... % with Vandermonde matrices etc. Do not work with cosinuses
+        opts.formulation =   ... 'analytic' ... % with Vandermonde matrices etc. Do not work with cosinuses
                              'eigenspace' ... % from the eigenspace
                             ;
-        % SIGNAL PERTURBATION AND COVARIANCE
-            if isempty(SignalModel) ; computeSignalModel() ; end
-            if ~strcmp(lin_method,'none') && strcmp(estimate,'std') % standard deviation estimation: std
-                if(DEBUG) ; display('        data covariance') ; end
-                switch covar_estim
-                    case 'uniform'
-                        var_dS = var(dS(:),0); % scalar
-                    case 'diagonal'
-                        var_dS = abs(dS).^2 ; % matrix !
-                end
-            end
-        % WAVEVECTOR PERTURBATION
-            if COMPUTE_dK
-                if(DEBUG) ; display('        wavevector uncertainties') ; end
-                % Perturbed HbH matrix if needed
-                    if strcmp(lin_method,'none') %|| strcmp(estimate,'delta')
-                        if(DEBUG) ; display('             dHss') ; end
-                        dH = buildHss(dS) ;
-                    end
-                % Selection matrices if needed
-                    if(DEBUG) ; display('             selection matrices') ; end
-                    switch lin_method
-                        case 'kron'
-                            % M Matrix
-                                Ip = speye(length(indP)) ;
-                                I = speye(prod(Lk)) ;
-                                M = sparse(prod(Kk)*prod(Mk)*length(indP),prod(Lk)*length(indP)) ;
-                                for m = 1:prod(Mk)
-                                    Im = I(indHbH{1}(:,m),:) ;
-                                    for i = 2:n_indHbH
-                                        Im = Im + I(indHbH{i}(:,m),:) ;
-                                    end
-                                    Mm = kron(Ip,Im);
-                                    M((1:prod(Kk)*length(indP))+(m-1)*(prod(Kk)*length(indP)),:) = Mm ;
-                                end
-                        otherwise
-                            % Jdelta matrix (decimation selection matrix)
-                                I = speye(prod(Lk),prod(Lk-Mk+1)) ;
-                                Jdelta = I(indHbH{1}(:,1),:) ;
-                                for i = 2:n_indHbH
-                                    Jdelta = Jdelta/2 + I(indHbH{i}(:,1),:)/2 ;
-                                end
-                    end
-                % INITIALIZATION
-                    dK = zeros(size(K)) ;
-                    shifts = eye(length(DIMS_K)) ; % /!\ SHIFTS IS DEFAULT HERE !
-                % HUGE DATA LOOP
-                    if hugeData 
-                        indP_bkp = indP(:)' ; % the for-loop will iterate
-                    else
-                        indP_bkp = indP(:) ; % the for-loop will NOT iterate
-                    end
-                % GOOOOOO !
-                    for indP = indP_bkp
-                        % Pre-Computations
-                            % Right vector of the bilinear form
-                                if(DEBUG) ; display('             right eigenvectors of Css') ; end
-                                switch formulation
-                                    case 'analytic'
-                                        % Partial Vandermonde matrices
-                                            if isempty(V) ; buildVandermonde(Lk) ; end
-                                            P = V(indHbH{1}(:,1),:) ;
-                                            Q = V(indHbH{1}(1,:),:) ;
-                                        % Complete right-Vandermonde Matrix
-                                            QA = zeros(prod(Mk)*length(indP),R0(R)) ;
-                                            for p = 1:length(indP) 
-                                                QA((1:prod(Mk))+(p-1)*prod(Mk),:) = Q*diag(A(:,indP(p))) ;
-                                            end
-                                            x = (QA\eye(size(QA,1)))' ;
-                                    case 'eigenspace'
-                                        if isempty(Hss) ; Hss = buildHss(SignalModel) ; end
-                                        x = conj(bsxfun(@(x,c)x./c,Hss'*W(:,1:R0(R)),lambda(1:R0(R)).')*T) ;
-                                end
-                        % Loop over the shifts
-                            if(DEBUG) ; display('             uncertainties') ; end
-                            for s = 1:size(K,1)
-                                [~,~,~,Jup,Jdwn] = selectMatrices(shifts(s,:)) ;
-                                % pre-compute
-                                    switch formulation
-                                        case 'analytic'
-                                            vn = (Jup*P)\speye(size(Jdwn,1)) ;
-                                        case 'eigenspace'
-                                            vn = T\((Jup*W(:,1:R0(R)))\speye(size(Jdwn,1))) ;
-                                    end
-                                % Loop over the R0(R) components
-                                    for r = 1:size(K,2)
-                                        % The polar component
-                                            switch FUNC(s,:)
-                                                case 'exp'
-                                                    PIrn = exp(1i*K(s,r)*DECIM_K(s)) ;
-                                                    Arn = exp(1i*K(s,r)*DECIM_K(s)) ;
-                                                case 'cos'
-                                                    PIrn = cos(K(s,r)*DECIM_K(s)) ;
-                                                    Arn = abs(sin(K(s,r)*DECIM_K(s))) ;
-                                            end
-                                        % Linearization method
-                                            switch lin_method
-                                                case 'none' % NO LINEARIZATION, uncertainty only
-                                                    vrn = (vn(r,:)*(Jdwn-PIrn*Jup))' ;
-                                                    dK(s,r) = dK(s,r) + abs(vrn.'*dH*x(:,r)) ;
-                                                case 'conv' % LINEAR / BY CONVOLUTION (USE OF THE HANKEL SHAPE OF Hss)
-                                                    vrn = (vn(r,:)*(Jdwn-PIrn*Jup)*Jdelta)' ;
-                                                    VRN = full(reshape(vrn,[1 Lk-Mk+1])) ;
-                                                    XR = reshape(x(:,r),[length(indP) Mk]) ;
-                                                    ZN = ifftn(bsxfun(@times,fftn(VRN,[1 Lk]),fftn(XR,[length(indP) Lk]))) ; % ND convolution
-                                                    zn = conj(ZN(:)) ;
-                                                case 'kron' % LINEAR / BY VECTORIZATION (USES vec(A*X*B) = kron(B.',A)*vec(X) ) 
-                                                    vrn = (vn(r,:)*(Jdwn-PIrn*Jup))' ;
-                                                    zn = (kron((x(:,r)),vrn)'*M).' ;
-                                            end
-                                        % Perturbation estimate
-                                            if ~strcmp(lin_method,'none')
-                                                switch estimate
-                                                    case 'std'
-                                                        switch covar_estim
-                                                            case 'uniform'
-                                                                dK(s,r) = dK(s,r) + var_dS*sum(abs(zn).^2) ;
-                                                            case 'diagonal'
-                                                                dK(s,r) = dK(s,r) + sum(abs(zn).^2.*reshape(var_dS(indP,:),[],1)) ;
-                                                        end
-                                                    case 'delta'
-                                                        dK(s,r) = dK(s,r) + abs(zn)'*reshape(dS(indP,:),[],1) ;
-                                                end
-                                            end  ;
-                                    end % end of this signal order r
-                            end % end of this shift s
-                    end % end of the points indP
-                % Common terms
-                    if strcmp(estimate,'std') ; dK = sqrt(dK) ; end
-                    dK = diag(DECIM_K)*abs(dK)/abs(Arn) ;
-                % Backup the point indices
-                    indP = indP_bkp(:)' ;
-            end
-        % AMPLITUDES PERTURBATION
-            if COMPUTE_dU
-                if length(DIMS_K)>1 || any(isCOS(:)) ; dU = NaN*ones(size(U)) ; return ; end
-                if(DEBUG) ; display('        amplitudes uncertainty') ; end
-                if isempty(V) ; buildVandermonde(Lk) ; end
-                % Pre-compute the inverse of V
-                    if(DEBUG) ; display('             inverse of V') ; end
-                    invV = V\eye(prod(Lk)) ;
-                % Uncertainty
-                    switch estimate
-                        case 'std'
-                            dU = zeros(R0(R),prod(Lp));
-                            for r = 1:R0(R)
-                                zrn = invV(r,:)' ;
-                                    switch covar_estim
-                                        case 'uniform'
-                                            dU(r,:) = sqrt(var_dS*sum(abs(zrn).^2)) ;
-                                        case 'diagonal'
-                                            dU(r,:) = sqrt(var_dS*abs(zrn(:)).^2).' ;
-                                    end
-                                dU = dU*2 ; % Yes, I don't know why this factor 2...
-                            end
-                        case 'delta'
-                            dV = bsxfun(@times,(0:Lk-1)',V)*diag(dK(1,:)) ;
-                            dU = abs(abs(invV)*(dS.' + abs(dV)*U.'));
-                    end
-                % Final Processing
-                    dU = reshape(dU.',[Lp , size(K,2)]) ;
-            end
+        opts.debug = this.DEBUG ;
     end
-
-
     
-
-% ===================================================================================================================    
-% INPUT PROCESSING
-% ===================================================================================================================
-
-
-% DEFAULT ARGUMENTS
-    function defInputs(paramSet)
-        if ~paramSet(1) ; DIMS_K = find(size(Signal)~=1,1,'last') ; end
-        if ~paramSet(2) ; FUNC = repmat('exp',[length(DIMS_K) 1]) ; end
-        if ~paramSet(3) ; R0 = 1:floor(min(arrayfun(@(d)size(Signal,d),DIMS_K)/2)) ; end
-        if ~paramSet(4) ; CRIT_THRS = 1 ; end
-        if ~paramSet(5) ; FIT = 'TLS' ; end
-        if ~paramSet(6) ; DECIM = ones(1,ndims(Signal)) ; end
-        if ~paramSet(7) ; SHIFTS = eye(length(DIMS_K)) ; end
-        if ~paramSet(8) ; CHOICE = 'auto' ; end
-        if ~paramSet(9) ; STABILDIAG = false ; end
-        if ~paramSet(10) ; MAC = false ; end
-        if ~paramSet(11) ; DEBUG = false ; end
-        if ~paramSet(12) ; CRITERION = 'MDL' ; end
-        if ~paramSet(13) ; SOLVER = 'eig' ; end
-        if ~paramSet(14) ; COMPUTE_U = false ; end
-        if ~paramSet(15) ; M_L = 2/3 ; end
-        if ~paramSet(16) ; W0 = [] ; end
-        if ~paramSet(17) ; COMPUTE_dK = false ; end
-        if ~paramSet(18) ; SIGNAL_MODEL = false ; end
-        if ~paramSet(19) ; COMPUTE_dU = false ; end
-        if ~paramSet(20) ; Kstab = [] ; end
-        if ~paramSet(21) ; Ustab = [] ; end
+    function dS = modelError(this,V,A)
+    % The signal error (or perturbation)
+        if nargin<2 ; V = vandermondeMatrix(this) ; end
+        if nargin<3 ; A = extractAmplitudes(this,V) ; end
+        dS = this.reshapedSignal - this.signalModel(V,A,false) ;
     end
-
-
-% PROCESS INPUTS
-    function parseInputs
-        % Initialize
-            nargin = length(varargin) ;
-            paramSet = false(100) ;
-            defInputs(paramSet) ;
-        % Processing to do
-            TODO = [] ; % Default, DO everything
-        % Is the first argument a structure ?
-            if isstruct(varargin{1}) && strcmp(varargin{1}.Title,'ESPRIT_Results')
-                % Initialize the output
-                    OUT = varargin{1} ;
-                % Import the structure
-                    for fname = fieldnames(OUT)'
-                        try eval([fname{1},'=OUT.',fname{1},';']) ; end
-                    end
-                % Is there a second argument to limit the processing ?
-                    if nargin>2
-                        TODO = varargin{2} ;
-                    end
-                % Skeep varargin processing
-                    return ;
-            end
-        % Is DIMS_K the first argument ?
-            if mod(nargin,2)==1 
-                if isnumeric(varargin{1})
-                    DIMS_K = varargin{1} ;
-                    paramSet(1) = true ;
+    
+    function var_dS = errorVariance(this,dS,estim)
+    % Estimate a covariance of the signal error (or perturbation)
+        if nargin<2 ; dS = this.modelError() ; end
+        if nargin<3 ; estim = this.uncertaintyOptions().covar_estim ; end
+    % Standard deviation estimation: std
+        switch estim
+            case 'uniform'
+                var_dS = var(dS(:),0); % scalar
+            case 'diagonal'
+                var_dS = abs(dS).^2 ; % matrix !
+        end
+    end
+    
+    function dK = poleUncertainty(this)
+    % Uncertainty associated to the estimation of wavevectors
+    end
+    
+    function dU = modeUncertainty(this)
+    % Uncertainty associated to the estimation of amplitudes/modes
+    end
+    
+    function [dK,dU] = computeUncertainties(this,K,V,A)
+    % Return the uncertainties associated to each parameter
+        if nargin<2 ; K = this.extractPoles ; end
+        if nargin<3 ; V = this.vandermondeMatrix(this.K) ; end
+        if nargin<4 ; A = this.extractAmplitudes(V) ; end
+        dK = [] ; dU = [] ;
+    % OPTIONS (hard-coded for now)
+        opts = this.uncertaintyOptions() ;
+    % COMMON DATA
+        k = this.Kk ; m = this.Mk ; l = this.Lk ;
+        decim = this.DECIM_K ;
+        iHbH = this.blockHankelIndices() ;
+        indP = this.modeIndices ;
+        [nD,R] = size(K) ;
+        if ismember(opts.formulation,{'eigenspace'}) 
+            [W,lambda] = this.signalSubspace(R) ; 
+            [~,T] = extractPoles(this,W,R) ;
+        end
+    % SIGNAL PERTURBATION AND COVARIANCE
+        dS = this.modelError(V,A,false) ;
+        if ~strcmp(opts.lin_method,'none') && strcmp(opts.estimate,'std')
+            if(opts.debug) ; disp('        data covariance') ; end
+            var_dS = errorVariance(this,dS,opts.covar_estim) ;
+        end
+    % WAVEVECTOR PERTURBATION
+        if this.COMPUTE_dK
+            if(opts.debug) ; disp('        wavevector uncertainties') ; end
+            % Perturbed HbH matrix if needed
+                if strcmp(opts.lin_method,'none') %|| strcmp(estimate,'delta')
+                    if(opts.debug) ; disp('             dHss') ; end
+                    dH = this.signalMatrix(dS) ;
+                end
+            % Selection matrices if needed
+                if(opts.debug) ; disp('             selection matrices') ; end
+                switch opts.lin_method
+                    case 'kron' % M Matrix
+                        Ip = speye(length(indP)) ;
+                        I = speye(prod(l)) ;
+                        M = sparse(prod(k)*prod(m)*length(indP),prod(l)*length(indP)) ;
+                        for m = 1:prod(m)
+                            Im = I(iHbH{1}(:,m),:) ;
+                            for i = 2:numel(iHbH)
+                                Im = Im + I(iHbH{i}(:,m),:) ;
+                            end
+                            Mm = kron(Ip,Im);
+                            M((1:prod(k)*length(indP))+(m-1)*(prod(k)*length(indP)),:) = Mm ;
+                        end
+                    otherwise % Jdelta matrix (decimation selection matrix)
+                        I = speye(prod(l),prod(l-m+1)) ;
+                        Jdelta = I(iHbH{1}(:,1),:) ;
+                        for i = 2:numel(iHbH)
+                            Jdelta = Jdelta/2 + I(iHbH{i}(:,1),:)/2 ;
+                        end
+                end
+            % INITIALIZATION
+                dK = zeros(nD,R) ;
+                shifts = eye(nD) ; % /!\ SHIFTS IS DEFAULT HERE !
+            % HUGE DATA LOOP
+                if opts.hugeData 
+                    indP_bkp = indP(:)' ; % the for-loop will iterate
                 else
-                    errorInput('Wrong second argument : should be DIMS_K or a string') ;
+                    indP_bkp = indP(:) ; % the for-loop will NOT iterate
                 end
-                if nargin>1
-                    varargin = varargin(2:end) ;
-                end
-            end
-        % Treat following arguments
-            if nargin>1
-                for i = 1:2:length(varargin)-1
-                    Name = varargin{i} ;
-                    Value = varargin{i+1} ;
-                    if isempty(Value) ; continue ; end
-                    switch upper(Name)
-                        case 'DIMS_K'
-                            DIMS_K = Value ;
-                            paramSet(1) = true ;
-                        case 'FUNC'
-                            FUNC = Value ;
-                            paramSet(2) = true ;
-                        case 'R0'
-                            R0 = Value ;
-                            paramSet(3) = true ;
-                        case 'CRIT_THRS'
-                            CRIT_THRS = Value ;
-                            paramSet(4) = true ;
-                        case 'FIT'
-                            FIT = upper(Value) ;
-                            paramSet(5) = true ;
-                        case 'DECIM'
-                            DECIM = Value ;
-                            paramSet(6) = true ;
-                        case 'SHIFTS'
-                            SHIFTS = Value ;
-                            paramSet(7) = true ;
-                        case 'CHOICE'
-                            CHOICE = Value ;
-                            paramSet(8) = true ;
-                        case 'STABILDIAG'
-                            STABILDIAG = Value ;
-                            paramSet(9) = true ;
-                        case 'MAC'
-                            MAC = Value ;
-                            paramSet(10) = true ;
-                        case 'DEBUG'
-                            DEBUG = Value ;
-                            paramSet(11) = true ;
-                        case 'CRITERION'
-                            CRITERION = Value ;
-                            paramSet(12) = true ;
-                        case 'SOLVER'
-                            SOLVER = Value ;
-                            paramSet(13) = true ;
-                        case 'COMPUTE_U'
-                            COMPUTE_U = Value ;
-                            paramSet(14) = true ;
-                        case 'M/L'
-                            M_L = Value ;
-                            paramSet(15) = true ;
-                        case 'W0'
-                            W0 = Value ;
-                            paramSet(16) = true ;
-                        case 'COMPUTE_DK'
-                            COMPUTE_dK = Value ;
-                            paramSet(17) = true ;
-                        case 'SIGNAL_MODEL'
-                            SIGNAL_MODEL = Value ;
-                            paramSet(18) = true ;
-                        case 'COMPUTE_DU'
-                            COMPUTE_dU = Value ;
-                            paramSet(19) = true ;
-                        case 'KSTAB'
-                            Kstab = Value ;
-                            paramSet(20) = true ;
-                        case 'USTAB'
-                            Ustab = Value ;
-                            paramSet(21) = true ;
-                        otherwise
-                            %errorInput(['Wrong argument name in n°',num2str(i),'.'])
-                            errorInput([Name,' (n°',num2str(i),').'])
-                    end
-                end
-            end
-        % DEFAULT VALUES
-            defInputs(paramSet) ;
-    end
-
-
-% PROMPT AN ERROR ON WRONG INPUT ARGUMENTS
-    function errorInput(info) 
-        msg = ['Incorrect input argument : '] ;
-        msg = [msg,info] ;
-        error([msg,char(10)])
-    end
-
-
-    
-
-% ===================================================================================================================    
-% STABILIZATION DIAGRAM
-% ===================================================================================================================
-
-% PLOT THE STABILIZATION DIAGRAM
-    function stabilizationDiagram()
-        if length(DIMS_K)>1 ; warning('Stabilization Diagram is available for 1D-ESPRIT only.') ; return ; end
-        % Are old results available or compute the stab. diag. ?
-            if onlyStabDiag
-                K = Kstab(end,:) ;
-                R = size(Kstab,1) ;
-            else
-                % Compute All the Poles for All Signal Orders
-                    Kstab = zeros(length(R0),max(R0))*NaN*(1+1i) ;
-                    for r = 1:length(R0)
-                        extractPoles(r) ; 
-                        Kstab(r,1:R0(r)) = K ;
-                    end
-                    K = Kstab(R,1:R0(R)) ;
-                % Sort the poles
-                    Kstab = sort(Kstab,2,'ascend') ; % Simply sort by value
-            end
-        % Initialize the stabilization diagram
-            stab = InitStabDiag() ;
-        % SORT WITH MAC VALUES
-            % Initialize the branches
-                stab.branches = plot3(stab.axPoles,...
-                                        NaN*ones(length(R0),max(R0)),...
-                                        NaN*ones(length(R0),max(R0)),...
-                                        NaN*ones(length(R0),max(R0)),...
-                                        '-k','linewidth',.5) ;
-                uistack(stab.branches,'bottom') ;
-                set(stab.branches,'color',[1 1 1]*.5) ;
-            % Sort if needed
-                if isempty(Ustab) && MAC % Sort with MACs
-                    stab = SortStabDiag(stab) ;
-                    V = [] ;
-                end
-        % Backup the current poles choice
-            K = Kstab(R,1:R0(R)) ;
-        % Init interactions
-            stab = InitModeShape(stab) ;
-            stab = InitStabDiagInteract(stab) ;
-        % Wait for the figure to be closed
-            stab;
-            if ~onlyStabDiag ; uiwait(stab.fig) ; end
-            drawnow ;
-    end
-
-
-% FOLLOW MODES WITH MAC VALUES
-    function stab = SortStabDiag(stab)    
-        % Initialize
-            %Ustab = ones(prod(Lp),length(R0),max(R0))*NaN*(1+1i) ; % dims : [Point order pole]
-            Ustab = ones(length(indP),length(R0),max(R0))*NaN*(1+1i) ; % dims : [Point order pole]
-        % Process Data
-            for r = 1:length(R0)
-                % Compute the mode
-                    K = Kstab(r,1:R0(r)) ;
-                    buildVandermonde(Lk) ;
-                    Ustab(:,r,1:R0(r)) = (V\Signal(indP,:).').' ;
-                % Not the first mode ?
-                    if r>1
-                        % Compute the MAC matrix
-                            U1 = squeeze(Ustab(:,r-1,1:R0(r-1))) ;
-                            U2 = squeeze(Ustab(:,r,1:R0(r))) ;
-                            mac = abs(U2'*U1)./sqrt(sum(abs(U2).^2,1)'*sum(abs(U1).^2,1)) ;
-                        % Sort the parameters
-                            indices = NaN*ones(1,R0(r-1)) ;
-                            % Loop
-                                for rr = 1:R0(r-1)
-                                    % Get the max. Value
-                                        maxMAC = max(mac(:)) ;
-                                        if maxMAC<MAC ; break ; end
-                                        [rmax,cmax] = find(mac==maxMAC) ;
-                                    % Set the corresponding mac values to NaN
-                                        mac(:,cmax(1)) = nan ;
-                                        mac(rmax(1),:) = nan ;
-                                    % Save to the indices vector
-                                        indices(cmax(1))=rmax(1) ;
-                                    % Break if all modes have been classified
-                                        if ~any(~isnan(mac(:))) ; break ; end
+            % GOOOOOO !
+                for indP = indP_bkp
+                % Pre-Computations
+                    % Right vector of the bilinear form
+                        if(opts.debug) ; disp('             right eigenvectors of Css') ; end
+                        switch opts.formulation
+                            case 'analytic'
+                            % Partial Vandermonde matrices
+                                P = V(iHbH{1}(:,1),:) ;
+                                Q = V(iHbH{1}(1,:),:) ;
+                            % Complete right-Vandermonde Matrix
+                                QA = zeros(prod(m)*length(indP),R) ;
+                                for p = 1:length(indP) 
+                                    QA((1:prod(m))+(p-1)*prod(m),:) = Q*diag(A(:,indP(p))) ;
                                 end
-                            % Remaining non-sorted indices
-                                indices = indices(~isnan(indices)) ;
-                                indices = [indices setdiff(1:R0(r),indices)] ;
-                            % Rearrange
-                                Kstab(r,1:R0(r)) = Kstab(r,indices) ;
-                                Ustab(:,r,1:R0(r)) = Ustab(:,r,indices) ;
-                    end
-                % Update Plot
-                    for br = 1:R0(r)
-                        stab.branches(br).XData(1:r) = abs(real(Kstab(1:r,br))) ;
-                        stab.branches(br).YData(1:r) = R0(1:r) ;
-                        stab.branches(br).ZData(1:r) = abs(imag(Kstab(1:r,br))./real(Kstab(1:r,br))) ;
-                    end
-                % Update the sorted scatter plot
-                    stab.scatCriterion.XData = abs(real(Kstab(:))) ;
-                    stab.scatCriterion.ZData = abs(imag(Kstab(:))./real(Kstab(:))) ;
-                % Draw
-                    drawnow ;
-            end
-    end
-    
-
-
-% STABILIZATION DIAGRAM INITIALIZATION
-    function stab = InitStabDiag()
-        % Figure init
-            relSize = .85 ;
-            stab.fig = figure(...
-                            'NumberTitle','off'...
-                            ,'Name','ESPRIT : STABILIZATION DIAGRAM. Click to select an other signal order. Right Click to quit.'...
-                            ,'tag','ESPRIT.StabDiag' ...
-                            ) ;
-            %if DEBUG ; stab.fig.WindowStyle = 'docked' ; end
-            stab.fig.Position(1:2) = stab.fig.Position(1:2) + stab.fig.Position(3:4)*(1-relSize)/2 ;
-            stab.fig.Position(3:4) = stab.fig.Position(3:4)*relSize ;
-        % Axes for the Poles
-            stab.axPoles = axes('outerposition',[.2 0 .8 1]) ;
-                stab.scatCriterion = scatter3(stab.axPoles,...
-                        abs(real(Kstab(:))),...
-                        repmat(R0(:),[size(Kstab,2),1]),...
-                        abs(imag(Kstab(:))./real(Kstab(:))),...
-                        200,...
-                        'k',...
-                        '.',...
-                        'tag','scatCriterion') ;
-                %plot3(abs(real(Kstab)),repmat(R0(:),[1 max(R0)]),abs(imag(Kstab)./real(Kstab)),'.k','markersize',10,'linewidth',.5)
-                stab.axPoles.ZScale = 'log' ;
-                stab.axPoles.SortMethod = 'childorder' ;
-                % Format
-                    stab.axPoles.YTickLabel = []; 
-                    stab.axPoles.YMinorTick = 'on'; 
-                    %stab.axPoles.YMinorGrid = 'on'; 
-                    grid(stab.axPoles,'on') ;
-            stab.axMean = axes('position',stab.axPoles.Position) ;
-                meanFFTSignal = Signal ;
-                meanFFTSignal = fft(meanFFTSignal,[],2) ;
-                meanFFTSignal = abs(meanFFTSignal) ;
-                meanFFTSignal = mean(meanFFTSignal,1) ;
-                plot((0:prod(Lk)-1)/prod(Lk)*2*pi,log10(meanFFTSignal),'k') ;
-                axis off
-                box on
-            % Link axes
-                set([stab.axMean stab.axPoles],'xscale','log')
-                % Limits
-                    %set([stab.axMean stab.axPoles],'xlim',[1/prod(Lk)*2*pi/2 pi]) ;
-                    w = abs(real(Kstab(:))) ;
-                    set([stab.axMean stab.axPoles],'xlim',[min(w(w~=0)) max(w)].*[0.9 1.1]) ;
-                set([stab.axPoles],'ylim',[min(R0) max(R0)]) ;
-                global hlink , hlink = linkprop([stab.axMean stab.axPoles],'position') ;
-                linkaxes([stab.axMean stab.axPoles],'x') ;
-                uistack(stab.axMean,'bottom') ;
-        % Axes for the signal order selection Criterion(s)
-            stab.axCrit = axes('outerposition',[0 0 .2 1]) ;
-                % Plot ALL Criterions
-                    %plot(R0,(CRIT./max(CRIT)),'.-','markersize',20,'linewidth',1) ;
-                    plot(R0,(MDL./max(MDL)),'.-','markersize',20,'linewidth',1) ;
-                    plot(R0,(ESTER./max(ESTER)),'.-','markersize',20,'linewidth',1) ;
-                    plot(R0,(SAMOS./max(SAMOS)),'.-','markersize',20,'linewidth',1) ;
-                % Format the axes
-                    set(gca,'view',[-90 90]) ;
-                    box on
-                    grid on
-                    axis tight
-                    stab.axCrit.XLim = [min(R0) max(R0)] ;
-                % Cursors
-                    stab.plOrderLine = plot(stab.axCrit,R0(R)*[1 1],stab.axCrit.YLim,'-.k','linewidth',1) ;
-                    stab.plRLine = plot(stab.axCrit,R0(R)*[1 1],stab.axCrit.YLim,'-.r','linewidth',1) ;
-                % Disable rotate3d
-                    hBehavior = hggetbehavior(stab.axCrit,'Rotate3d');
-                    hBehavior.Enable = false ;
-                % Legend
-                    legend({'MDL','ESTER','SAMOS'},'edgecolor','k','location','northwest') ;
-                % Re-align with the poles axes
-                    stab.axCrit.Position([2,4]) = stab.axPoles.Position([2,4]) ;
-        % Poles Chosen at the end
-            stab.plRPoles = plot3(stab.axPoles,abs(real(K)),R0(R)*ones(1,R0(R)),abs(imag(K)./real(K)),'or','markersize',15,'linewidth',1.5) ;
-        % Poles at the mouse position
-            stab.plOrderPoles = plot3(stab.axPoles,abs(real(K)),R0(R)*ones(1,R0(R)),abs(imag(K)./real(K)),'.m','markersize',25) ;
-        % DRAW
-            drawnow ;
-    end
-
-
-% MODE SHAPE PLOT
-    function stab = InitModeShape(stab) 
-        % Prepare the axes
-            stab.axShape = axes() ;
-            stab.axShape.Position(1:2) = stab.axPoles.Position(1:2) ;
-            stab.axShape.Position(3:4) = [.2 .2] ;
-            stab.axShape.XTick = [] ;
-            stab.axShape.YTick = [] ;
-            stab.axShape.XLim = [-1 1] ;
-            stab.axShape.YLim = [-1 1] ;
-            axis(stab.axShape,'equal') ;
-            box(stab.axShape,'on') ;
-        % Prepare the plot
-            stab.plotShape = plot(stab.axShape,NaN,NaN,'+b','linewidth',.5,'markersize',8) ;
-            stab.markShape = plot(stab.axPoles,NaN,NaN,'+b','linewidth',2,'markersize',15) ;
-    end
-
-
-% INITIALIZE THE SAB DIAG INTERACTION
-    function stab = InitStabDiagInteract(stab)
-        % Buttons for the view
-            margin = 0.003 ;
-            btnWidth = 0.08 ;
-            btnHeight = 0.03 ;
-            % Frequency/damping switch
-                stab.btnSwitch = uicontrol(stab.fig,'style','pushbutton') ;
-                stab.btnSwitch.String = 'Frequency' ;
-                stab.btnSwitch.TooltipString = 'Switch Representation Mode' ;
-                stab.btnSwitch.Units = 'normalized' ;
-                stab.btnSwitch.Position = [stab.axPoles.Position(1:2)+stab.axPoles.Position(3)*[1 0]+[-btnWidth-margin btnHeight+margin] [btnWidth btnHeight]] ;
-                stab.btnSwitch.Callback = @(src,evt)btnSwitchCallback(stab) ;
-            % Listbox choose selection mode
-                stab.popupSelect = uicontrol(stab.fig,'style','popupmenu') ;
-                stab.popupSelect.String = {'Full','One'} ;
-                stab.popupSelect.TooltipString = 'Pole Selection' ;
-                stab.popupSelect.Units = 'normalized' ;
-                stab.popupSelect.Position = [stab.axPoles.Position(1:2)+stab.axPoles.Position(3)*[1 0]+[-2*btnWidth-2*margin btnHeight+margin] [btnWidth btnHeight]] ;
-                stab.popupSelect.Callback = @(src,evt)popupSelectCallback(stab) ;
-            % Listbox Criterion plot
-                stab.popupCriterion = uicontrol(stab.fig,'style','popupmenu') ;
-                stab.popupCriterion.String = {'None','Complexity','MAC','sigma(f)','sigma(xi)','sigma(phi)'} ;
-                stab.popupCriterion.TooltipString = 'Show a criterion' ;
-                stab.popupCriterion.Units = 'normalized' ;
-                stab.popupCriterion.Position = [stab.axPoles.Position(1:2)+stab.axPoles.Position(3)*[1 0]+[-3*btnWidth-3*margin btnHeight+margin] [btnWidth btnHeight]] ;
-                stab.popupCriterion.Callback = @(src,evt)popupCriterionCallback(stab) ;
-            % Slider to tune the criterion
-                stab.sliderCriterion = uicontrol(stab.fig,'style','slider','tag','sliderCriterion') ;
-                stab.sliderCriterion.TooltipString = 'Tune the criterion' ;
-                stab.sliderCriterion.Units = 'normalized' ;
-                stab.sliderCriterion.Position = [stab.axPoles.Position(1:2)+stab.axPoles.Position(3)*[1 0]+[-5*btnWidth-4*margin btnHeight+margin] [2*btnWidth btnHeight]] ;
-                addlistener(stab.sliderCriterion, 'ContinuousValueChange', @(src,evt) sliderCriterionCallback(stab)) ;
-                %stab.sliderCriterion.Callback = @(src,evt)sliderCriterionCallback(stab) ;
-        % Figure Callbacks setting
-            stab.fig.WindowButtonMotionFcn = @(src,evt)changeStabDiagOrder(Kstab,stab,'move') ;
-            stab.fig.WindowButtonDownFcn = @(src,evt)changeStabDiagOrder(Kstab,stab,'click') ;
-    end
-
-% CHANGE THE STABILIZATION DIAGRAM ORDER WITH MOUSE POSITION
-    function changeStabDiagOrder(Kstab,stab,event)
-        % Get the order given by the mouse position
-            mouseK = stab.axPoles.CurrentPoint(1,1) ;
-            mouseOrder = stab.axCrit.CurrentPoint(1,1) ;
-            selectOrder = min(max(R0(1),round(mouseOrder)),R0(end)) ;
-        % Get the pole
-            [~,order] = min(abs(R0-selectOrder)) ;
-            kk = abs(real(Kstab(order,:))) ;
-            [~,numPole] = min(abs(kk-mouseK)) ;
-        % Do something
-        switch event % MOUSE MOVED OR CLICKED
-            case 'move' % ONLY DISPLAY
-                % Process the mode shape
-                    if MAC
-                        uu = Ustab(:,order,numPole) ;
-                        uu = uu./max(abs(uu(:))) ;
-                        % Plot the mode shape
-                            stab.plotShape.XData = real(uu) ;
-                            stab.plotShape.YData = imag(uu) ;
-                            stab.markShape.XData = abs(real(Kstab(order,numPole))) ;
-                            stab.markShape.YData = R0(order) ;
-                            stab.markShape.ZData = abs(imag(Kstab(order,numPole))./real(Kstab(order,numPole))) ;
-                    end
-                % Order cursor
-                    stab.plOrderLine.XData = R0(order)*[1 1] ;
-                    stab.plOrderPoles.XData = abs(real(Kstab(order,:))) ;
-                    stab.plOrderPoles.YData = R0(order)*ones(1,max(R0)) ;
-                    stab.plOrderPoles.ZData = abs(imag(Kstab(order,:))./real(Kstab(order,:))) ;
-            case 'click' % CHANGE THE CHOOSEN POLES
-                switch stab.fig.SelectionType % Mode of selection
-                    case 'normal' % ADD THE CORRRESPONDING POLES
-                        % Depending on the selection mode...
-                            switch stab.popupSelect.String{stab.popupSelect.Value}
-                                case 'Full'
-                                    R = order ;
-                                    K = Kstab(R,1:R0(R)) ;
-                                    stab.plRPoles.XData = abs(real(K)) ;
-                                    stab.plRPoles.YData = R0(order)*ones(1,R0(R)) ;
-                                    stab.plRPoles.ZData = abs(imag(K)./real(K)) ;
-                                case 'One'
-                                    % Has the pole already been selected ?
-                                        ind = find(abs(abs(real(K))-abs(real(Kstab(order,numPole))))<eps) ;
-                                        switch isempty(ind)
-                                            case true % The pole is new: add it
-                                                if DEBUG ; disp(['Add K: ',num2str(Kstab(order,numPole),3)]) ; end
-                                                if ~isreal(Signal) % The signal is complex
-                                                    K(end+1) = Kstab(order,numPole) ;
-                                                    stab.plRPoles.YData(end+1) = R0(order) ;
-                                                else % The signal is real, add the conjugate pole
-                                                    K(end+(1:2)) = [Kstab(order,numPole),-conj(Kstab(order,numPole))] ;
-                                                    stab.plRPoles.YData(end+(1:2)) = R0(order)*[1 1] ;
-                                                end 
-                                            case false % The pole has to be removed
-                                                if DEBUG ; disp(['Rem K: ',num2str(Kstab(order,numPole),3)]) ; end
-                                                K(ind) = [] ;
-                                                stab.plRPoles.YData(ind) = [] ;
-                                        end
-                                    % Update the markers
-                                        stab.plRPoles.XData = abs(real(K)) ;
-                                        stab.plRPoles.ZData = abs(imag(K)./real(K)) ;
-                            end
-                        % Update markers
-                            stab.plRLine.XData = R0(order)*[1 1] ;
-                        % DISPLAY INFOS
-                            if DEBUG ; disp(['K: ',mat2str(K,2)]) ; end
-                    case 'open' % NO ACTION
-                    case 'alt' % RIGHT-CLICK, CLOSE THE STAB. DIAG.
-                        close(stab.fig) ;
+                                x = (QA\eye(size(QA,1)))' ;
+                            case 'eigenspace'
+                                Hs = this.signalMatrix(this.signalModel(V,A,false),iHbH) ;
+                                x = conj(((Hs'*W)./lambda(1:R).')*T) ;
+                        end
+                % Loop over the shifts
+                    if(opts.debug) ; disp('             uncertainties') ; end
+                    for s = 1:nD
+                        [Jup,Jdwn] = this.selectionMatrices(shifts(s,:)) ;
+                    % pre-compute
+                        switch opts.formulation
+                            case 'analytic'
+                                vn = (Jup*P)\speye(size(Jdwn,1)) ;
+                            case 'eigenspace'
+                                vn = T\((Jup*W)\speye(size(Jdwn,1))) ;
+                        end
+                    % Loop over the R components
+                        for r = 1:R
+                            % The polar component
+                                switch this.FUNC{s}
+                                    case 'exp'
+                                        PIrn = exp(1i*K(s,r)*decim(s)) ;
+                                        Arn = exp(1i*K(s,r)*decim(s)) ;
+                                    case 'cos'
+                                        PIrn = cos(K(s,r)*decim(s)) ;
+                                        Arn = abs(sin(K(s,r)*decim(s))) ;
+                                end
+                            % Linearization method
+                                switch opts.lin_method
+                                    case 'none' % NO LINEARIZATION, uncertainty only
+                                        vrn = (vn(r,:)*(Jdwn-PIrn*Jup))' ;
+                                        dK(s,r) = dK(s,r) + abs(vrn.'*dH*x(:,r)) ;
+                                    case 'conv' % LINEAR / BY CONVOLUTION (USE OF THE HANKEL SHAPE OF Hss)
+                                        vrn = (vn(r,:)*(Jdwn-PIrn*Jup)*Jdelta)' ;
+                                        VRN = full(reshape(vrn,[1 l-m+1])) ;
+                                        XR = reshape(x(:,r),[length(indP) m]) ;
+                                        ZN = ifftn(bsxfun(@times,fftn(VRN,[1 l]),fftn(XR,[length(indP) l]))) ; % ND convolution
+                                        zn = conj(ZN(:)) ;
+                                    case 'kron' % LINEAR / BY VECTORIZATION (USES vec(A*X*B) = kron(B.',A)*vec(X) ) 
+                                        vrn = (vn(r,:)*(Jdwn-PIrn*Jup))' ;
+                                        zn = (kron((x(:,r)),vrn)'*M).' ;
+                                end
+                            % Perturbation estimate
+                                if ~strcmp(opts.lin_method,'none')
+                                    switch opts.estimate
+                                        case 'std'
+                                            switch opts.covar_estim
+                                                case 'uniform'
+                                                    dK(s,r) = dK(s,r) + var_dS*sum(abs(zn).^2) ;
+                                                case 'diagonal'
+                                                    dK(s,r) = dK(s,r) + sum(abs(zn).^2.*reshape(var_dS(indP,:),[],1)) ;
+                                            end
+                                        case 'delta'
+                                            dK(s,r) = dK(s,r) + abs(zn)'*reshape(dS(indP,:),[],1) ;
+                                    end
+                                end
+                        end % end of this signal order r
+                    end % end of this shift s
+                end % end of the points indP
+            % Common terms
+                if strcmp(opts.estimate,'std') ; dK = sqrt(dK) ; end
+                dK = diag(decim)*abs(dK)/abs(Arn) ;
+        end
+    % AMPLITUDES PERTURBATION
+        if this.COMPUTE_dU
+            [u,phi] = this.extractModes(A) ;
+            if nD>1 || any(this.isCOS(:)) ; dU = NaN*ones(size(u)) ; return ; end
+            if(opts.debug) ; disp('        amplitudes uncertainty') ; end
+            % Pre-compute the inverse of V
+                if(opts.debug) ; disp('             inverse of V') ; end
+                invV = V\eye(prod(l)) ;
+            % Uncertainty
+                switch opts.estimate
+                    case 'std'
+                        dU = zeros(R,prod(this.Lp));
+                        for r = 1:R
+                            zrn = invV(r,:)' ;
+                                switch opts.covar_estim
+                                    case 'uniform'
+                                        dU(r,:) = sqrt(var_dS*sum(abs(zrn).^2)) ;
+                                    case 'diagonal'
+                                        dU(r,:) = sqrt(var_dS*abs(zrn(:)).^2).' ;
+                                end
+                            dU = dU*2 ; % Yes, I don't know why this factor 2...
+                        end
+                    case 'delta'
+                        dV = ((0:l-1)'.*V)*diag(dK(1,:)) ;
+                        dU = abs(abs(invV)*(dS.' + abs(dV)*u.'));
                 end
+            % Final Processing
+                dU = reshape(dU.',[this.Lp R]) ;
         end
     end
-
-% CHANGE PLOT CRITERION
-    function popupCriterionCallback(stab)
-        % Delete any preovious criterion
-            %delete(findobj(stab.axPoles,'tag','scatCriterion')) ;
-            delete(findobj(stab.fig,'type','colorbar')) ;
-        % Compute the criterion
-            crit = NaN*ones(size(Kstab)) ;
-            maxCrit = 9 ;
-            switch stab.popupCriterion.String{stab.popupCriterion.Value}
-                case 'None' % No Criterion
-                    stab.CData = 'k' ;
-                    set(stab.branches,'visible','on') ;
-                case 'Complexity' % Evaluate the complexity
-                    for or = 1:size(Kstab,1) 
-                        for rr = 1:size(Kstab,2) ;
-                            if isnan(Kstab(or,rr)) ; continue ; end
-                            uu = Ustab(:,or,rr) ;
-                            uu = uu./abs(uu) ;
-                            S = [real(uu(:)) imag(uu(:))] ;
-                            g = sqrt(real(eig(S'*S))) ;
-                            crit(or,rr) = min(g)/max(g) ;
-                        end
-                    end
-                    maxCrit = 3 ;
-                case 'MAC' % MAC Value between successive modes
-                    for or = 2:size(Kstab,1) 
-                        for rr = 1:size(Kstab,2) ;
-                            if isnan(Kstab(or,rr)) ; continue ; end
-                            if isnan(Kstab(or-1,rr)) ; continue ; end
-                            mac = Ustab(:,or,rr)'*Ustab(:,or-1,rr)/norm(Ustab(:,or,rr))/norm(Ustab(:,or-1,rr)) ;
-                            crit(or,rr) = 1-abs(mac) ;
-                        end
-                    end
-                    maxCrit = 3 ;
-                case 'sigma(phi)' % MAC Value between successive modes
-                    for or = 2:size(Kstab,1) 
-                        for rr = 1:size(Kstab,2) ;
-                            if isnan(Kstab(or,rr)) ; continue ; end
-                            if isnan(Kstab(or-1,rr)) ; continue ; end
-                            crit(or,rr) = 1/2*norm(Ustab(:,or,rr)-Ustab(:,or-1,rr))/max(norm(Ustab(:,or,rr)),norm(Ustab(:,or-1,rr))) ;
-                        end
-                    end
-                case 'sigma(f)' % MAC Value between successive modes
-                    freqs = abs(real(Kstab)) ;
-                    for or = 2:size(Kstab,1) 
-                        for rr = 1:size(Kstab,2) ;
-                            if isnan(Kstab(or,rr)) ; continue ; end
-                            if isnan(Kstab(or-1,rr)) ; continue ; end
-                            crit(or,rr) = abs(freqs(or,rr)-freqs(or-1,rr))/max(freqs(or,rr),freqs(or-1,rr)) ;
-                        end
-                    end
-                case 'sigma(xi)' % MAC Value between successive modes
-                    xi = abs(imag(Kstab)./real(Kstab)) ;
-                    for or = 2:size(Kstab,1) 
-                        for rr = 1:size(Kstab,2) ;
-                            if isnan(Kstab(or,rr)) ; continue ; end
-                            if isnan(Kstab(or-1,rr)) ; continue ; end
-                            crit(or,rr) = abs(xi(or,rr)-xi(or-1,rr))/max(xi(or,rr),xi(or-1,rr)) ;
-                        end
-                    end
-            end
-        % Scatter plot
-            if ~strcmp('None',stab.popupCriterion.String{stab.popupCriterion.Value})
-                % Hide the branches
-                    set(stab.branches,'visible','off') ;
-                % Scatter
-                    stab.scatCriterion.CData = -log10(crit(:)) ;
-                % Colorbar
-                    colorbar(stab.axPoles) ;
-                    colormap(linspecer(1000)*.85) ;
-                % Color Range
-                    caxis auto
-                    caxis(stab.axPoles,[min(caxis(stab.axPoles)) min(max(caxis(stab.axPoles)),maxCrit)])
-                % Slider range
-                    crange = caxis(stab.axPoles) ;
-                    sli = findobj(stab.fig,'tag','sliderCriterion') ;
-                    sli.Min = crange(1) ;
-                    sli.Max = crange(2) ;
-                    sli.Value = sli.Min ;
-            end
-    end
-
-% CHANGE PLOT CRITERION
-    function sliderCriterionCallback(stab)
-        scat = findobj(stab.axPoles,'tag','scatCriterion') ;
-        if isempty(scat) ; return ; end
-        cri = scat.CData ;
-        fr = abs(real(Kstab(:))) ;
-        fr(cri<=stab.sliderCriterion.Value) = NaN ;
-        set(scat,'XData',fr) ;
-    end
-
-% CHANGE SELECTION MODE
-    function popupSelectCallback(stab)
-        % Initialize the choice of K
-            switch stab.popupSelect.String{stab.popupSelect.Value}
-                case 'Full' % Select the full order
-                    K = Kstab(R,1:R0(R)) ;
-                    stab.plRPoles.YData = R0(R)*ones(1,R0(R)) ;
-                case 'One' % Select poles one by one
-            end
-        % Initialize cursors
-            stab.plRLine.XData = R0(R)*[1 1] ;
-            stab.plRPoles.XData = abs(real(K)) ;
-            stab.plRPoles.ZData = abs(imag(K)./real(K)) ;
-    end
-
-% CHANGE STABIL. DIAGRAM ROTATION
-    function btnSwitchCallback(stab)
-        switch stab.btnSwitch.String
-            case 'Frequency' % switch to Damping
-                stab.axPoles.View = [0 0] ;
-                stab.btnSwitch.String = 'Damping' ;
-            case 'Damping' % switch to Frequency
-                stab.axPoles.View = [0 90] ;
-                stab.btnSwitch.String = 'Frequency' ;
-        end
-    end
-
-
 end
+    
+    
+end
+
+
+
+
 
