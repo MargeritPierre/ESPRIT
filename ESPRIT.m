@@ -69,13 +69,13 @@ classdef ESPRIT < handle
 properties
     Signal
     DIMS_K(1,:) 
-    M_L(1,:) double = 1/2
+    M_L(1,:) = 1/2
     DECIM(1,:)
     R0(1,:) 
     W0
-    SOLVER char = 'eig'
+    SOLVER char = 'tensor'
     CRITERION char = 'MDL'
-    CRIT_THRS(1,1) double = 1
+    CRIT_THRS(1,1) = 1
     CHOICE char = 'auto'
     FUNC cell
     SHIFTS 
@@ -91,7 +91,7 @@ end
 
 %% OUTPUT PROPERTIES (FOR COMPATIBILITY REASONS)
 properties
-    K,U,PHI
+    K,U,PHI,dK,dU
 end
 
 %% CONSTRUCTOR/DESTRUCTOR
@@ -250,18 +250,20 @@ methods
         if nargin<5 ; fun = this.FUNC ; end
     % Sub indices
         HI = this.hankelSubIndices(k,m,s,fun) ;
+        ck = cumprod([1 k(1:end-1)]) ; ckr = cumprod([k(2:end) 1],'reverse') ;
+        cm = cumprod([1 m(1:end-1)]) ; cmr = cumprod([m(2:end) 1],'reverse') ;
     % All Indices
         nD = numel(k) ;
-        IND = cell(nD,this.nSubHankelMat(fun)) ; % cell array of [prod(Kk) prod(Mk)] indices
+        IND = cell(nD,size(HI,2)) ; % cell array of [prod(Kk) prod(Mk)] indices
         for d = 1:nD
             switch lower(fun{d})
                 case 'exp'
-                    IND{d,1} = repmat(HI{d,1},[prod(k(1:d-1)) prod(m(1:d-1))]) ;
-                    IND{d,1} = repelem(IND{d,1},prod(k(d+1:end)),prod(m(d+1:end))) ;
+                    IND{d,1} = repelem(HI{d,1},ck(d),cm(d)) ;
+                    IND{d,1} = repmat(IND{d,1},ckr(d),cmr(d)) ;
                 case 'cos'
                     for i = 1:2
-                        IND{d,i} = repmat(HI{d,i},[prod(k(1:d-1)) prod(m(1:d-1))]) ;
-                        IND{d,i} = repelem(IND{d,i},prod(k(d+1:end)),prod(m(d+1:end))) ;
+                        IND{d,i} = repelem(HI{d,i},ck(d),cm(d)) ;
+                        IND{d,i} = repmat(IND{d,i},ckr(d),cmr(d)) ;
                     end
             end
         end
@@ -306,8 +308,8 @@ methods
         isShiftCOS = any(this.isCOS.*shift) ; % Cosinus searched in the shift ?
     % Subindices of the first colon of the H-b-H matrix
         k = this.Kk ;
-        dK = this.DECIM_K ;
-        hsi = this.blockHankelSubIndices(k,k*0+1,dK) ;
+        dec = this.DECIM_K ;
+        hsi = this.blockHankelSubIndices(k,k*0+1,dec) ;
     % Indices Up
         indUp = true(size(hsi{1})) ; 
         if isShiftCOS % Cosinus searched in the shift
@@ -316,11 +318,11 @@ methods
         for d = shift_dims
             switch lower(this.FUNC{d})
                 case 'exp'
-                    if shift(d)>0 ; indUp = indUp & (hsi{d,1}<=(k(d)-shift(d))*dK(d)) ; end
-                    if shift(d)<0 ; indUp = indUp & (hsi{d,1}>-shift(d)*dK(d)) ; end
+                    if shift(d)>0 ; indUp = indUp & (hsi{d,1}<=(k(d)-shift(d))*dec(d)) ; end
+                    if shift(d)<0 ; indUp = indUp & (hsi{d,1}>-shift(d)*dec(d)) ; end
                 case 'cos'
-                    indTrUp = indTrUp & (hsi{d,1}<=(k(d)-shift(d))*dK(d)) ;
-                    indTrUp = indTrUp & (hsi{d,1}>shift(d)*dK(d)) ;
+                    indTrUp = indTrUp & (hsi{d,1}<=(k(d)-shift(d))*dec(d)) ;
+                    indTrUp = indTrUp & (hsi{d,1}>shift(d)*dec(d)) ;
             end
         end
     % Indices Down
@@ -332,11 +334,11 @@ methods
         for d = shift_dims
             switch lower(this.FUNC{d})
                 case 'exp'
-                    if shift(d)>0 ; indDwn = indDwn & (hsi{d,1}>shift(d)*dK(d)) ; end
-                    if shift(d)<0 ; indDwn = indDwn & (hsi{d,1}<=(k(d)+shift(d))*dK(d)) ; end
+                    if shift(d)>0 ; indDwn = indDwn & (hsi{d,1}>shift(d)*dec(d)) ; end
+                    if shift(d)<0 ; indDwn = indDwn & (hsi{d,1}<=(k(d)+shift(d))*dec(d)) ; end
                 case 'cos'
-                    indTrDwn1 = indTrDwn1 & (hsi{d,1}<=(k(d)-2*abs(shift(d)))*dK(d)) ;
-                    indTrDwn2 = indTrDwn2 & (hsi{d,1}>2*abs(shift(d))*dK(d)) ;
+                    indTrDwn1 = indTrDwn1 & (hsi{d,1}<=(k(d)-2*abs(shift(d)))*dec(d)) ;
+                    indTrDwn2 = indTrDwn2 & (hsi{d,1}>2*abs(shift(d))*dec(d)) ;
             end
         end
     % Combine Indices
@@ -409,8 +411,8 @@ methods
         S = S(:,this.modeIndices) ;
     % Build the Hankel matrix
         if any(this.Mk~=1) % Mk~=1, spatial smoothing
-            Hs = S(iHbH{1},indP) ;
-            for i = 2:numel(iHbH) ; Hs = Hs + S(iHbH{i},indP) ; end
+            Hs = S(iHbH{1},:) ;
+            for i = 2:numel(iHbH) ; Hs = Hs + S(iHbH{i},:) ; end
         else % Mk==1, no spatial smoothing (multiple snapshots case)
             Hs = S ;
         end
@@ -527,10 +529,15 @@ methods
     % Estimate the signal subspace
         if nargin<2 ; R = max(this.R0)+1 ; end
         if nargin<3 ; method = this.SOLVER ; end
-    % Compute the signal covariance
-        Css = this.covarianceMatrix ;
+    % Pre-computations
+        if ~ismember(method,{'tensor'})
+            Css = this.covarianceMatrix ;
+        end
     % Adjust signal order candidates
-        R = min(R,size(Css,1)-1-max(sum(abs(this.SHIFTS),2))) ;
+        k = this.Kk ; m = this.Mk ; indP = this.modeIndices ;
+        Rmax = min(prod(k),prod(m)*numel(indP)) ;
+        Rmax = Rmax - 1- max(sum(abs(this.SHIFTS),2)) ;
+        R = min(R,Rmax) ;
     % ESTIMATION
         switch method
             case 'eig' % Re-compute the COMPLETE decomposition
@@ -538,6 +545,17 @@ methods
             case 'eigs'  % Re-compute the signal subspace ONLY
                 [W,lambda] = eigs(Css,R,'lm') ;
                 lambda = diag(lambda) ;
+            case 'tensor' % High-order tensor decomposition
+            % Build the signal tensor
+                Hs = this.signalMatrix ;
+                nD = numel(k) ;
+                A = reshape(Hs,[k prod(m)*numel(indP)]) ;
+            % High-Order SVD
+                [UU,S,ll] = this.hosvd(A,1:nD+1,R) ;
+            % Build the signal space
+                W = this.tuckerprod(1:nD,S,UU(1:nD)) ;
+                W = reshape(W,[prod(k) R]) ;
+                lambda = ll{nD+1} ;
             case 'follow' % Approximate with one QR iteration (Badeau-style)
                 Cxy = Css*this.W0 ;
                 [W,~] = qr(Cxy,0) ;
@@ -550,6 +568,68 @@ methods
     % KEEP ONLY THE HIGHEST E.V
         W = W(:,1:R) ; 
         lambda = lambda(1:R) ;
+    end
+end
+methods (Static)
+    function A = unfold(A,d)
+    % Return the mode-d unfolding of a tensor A
+        A = permute(A,[d 1:d-1 d+1:ndims(A)]) ;
+        A = reshape(A,size(A,1),[]) ;
+    end
+    
+    function A = refold(A,d,sz)
+    % Return the mode-d folded tensor
+        foldDims = [d 1:d-1 d+1:numel(sz)] ;
+        A = reshape(A,sz(foldDims)) ;
+        A = permute(A,[2:d 1 d+1:numel(sz)]) ;
+    end
+    
+    function B = tuckerprod(d,A,U)
+    % Return the d-mode Tucker product of a tensor with a matrix 
+    % Recursive multi-product ? (U has to be a cell array of matrices)
+        if numel(d)>1
+            A = ESPRIT.tuckerprod(d(1:end-1),A,U(1:end-1)) ; 
+        end
+    % Select only the last dimension
+        d = d(end) ;
+        if iscell(U) ; U = U{end} ; end
+    % Size information
+        szB = size(A) ; 
+        szB(d) = size(U,1) ;
+    % Tucker product
+        B = U*ESPRIT.unfold(A,d) ;
+        B = ESPRIT.refold(B,d,szB) ;
+    end
+    
+    function [U,A,lambda] = hosvd(A,dims,R)
+    % High-order (truncated) SVD decomposition of a tensor
+    % Dimensions along which to apply the SVD
+        sz = size(A) ; nD = ndims(A) ;
+        if nargin<2 || isempty(dims) ; dims = 1:nD ; end
+    % R is the truncation order
+        if nargin<3 || isempty(R) ; R = size(A,dims) ; end
+        R = R(:)'.*ones(1,numel(dims)) ;
+    % Perform the decomposition (interlaced implementation)
+        U = cell(1,nD) ; lambda = cell(1,nD) ;
+        for dd = 1:numel(dims)
+            d = dims(dd) ;
+        % mode-d unfolding of the tensor
+            Ad = ESPRIT.unfold(A,d) ;
+        % eigen space associated to the mode-d unfold
+            [U{d},lambda{d}] = eigs(Ad*Ad','vector') ;
+            %[U{d},lambda{d}] = eigs(Ad*Ad',R(dd),'lm') ;
+            lambda{d} = sqrt(lambda{d}) ; % eigenvalues of Ad²
+        % Select the R dominant components if needed
+            if R(dd)<sz(d) % truncate ?
+                [~,is] = sort(lambda{d},'descend') ;
+                is = is(1:R(dd)) ;
+                lambda{d} = lambda{d}(is) ;
+                U{d} = U{d}(:,is) ;
+                sz(d) = R(dd) ;
+            end
+        % reduce the signal tensor (at the end, A is the core tensor)
+            A = ESPRIT.refold(U{d}'*Ad,d,sz) ;
+        end
     end
 end
 
@@ -678,7 +758,7 @@ methods
         if nargin<2 ; A = this.extractAmplitudes() ; end
     % Reshaping
         lp = this.Lp ;
-        nK = size(V,2) ;
+        nK = size(A,1) ;
         if ~any(this.isCOS) % No cosinuses, no phases to estimate
             U = reshape(A.',[lp nK]) ;
             if nargout>1 ; PHI = zeros(size(U)) ; end
