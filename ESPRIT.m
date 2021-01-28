@@ -87,6 +87,7 @@ properties
     COMPUTE_dU(1,1) logical = false
     COMPUTE_dK(1,1) logical = false
     MAC(1,1) logical = false
+    UserData = [] % for user-custom data
 end
 
 %% OUTPUT PROPERTIES (FOR COMPATIBILITY REASONS)
@@ -550,7 +551,7 @@ methods
                 Hs = this.signalMatrix ;
                 nD = numel(k) ;
                 A = reshape(Hs,[k prod(m)*numel(indP)]) ;
-            % High-Order SVD
+            % High-Order SVD in the nD dimensions
                 [UU,S,ll] = this.hosvd(A,1:nD+1,R) ;
             % Build the signal space
                 W = this.tuckerprod(1:nD,S,UU(1:nD)) ;
@@ -601,7 +602,7 @@ methods (Static)
         B = ESPRIT.refold(B,d,szB) ;
     end
     
-    function [U,A,lambda] = hosvd(A,dims,R)
+    function [U,S,lambda] = hosvd(A,dims,R)
     % High-order (truncated) SVD decomposition of a tensor
     % Dimensions along which to apply the SVD
         sz = size(A) ; nD = ndims(A) ;
@@ -611,14 +612,26 @@ methods (Static)
         R = R(:)'.*ones(1,numel(dims)) ;
     % Perform the decomposition (interlaced implementation)
         U = cell(1,nD) ; lambda = cell(1,nD) ;
+        S = A ;
         for dd = 1:numel(dims)
             d = dims(dd) ;
         % mode-d unfolding of the tensor
-            Ad = ESPRIT.unfold(A,d) ;
+            Ad = ESPRIT.unfold(S,d) ;
+        % covariance
+            leftEV = size(Ad,1)<=size(Ad,2) ;
+            if leftEV % Usual covariance, compute left eigenvectors U
+                Cdd = Ad*Ad' ;
+            else % Compute the right-eigenvectors V
+                Cdd = Ad'*Ad ; 
+            end
         % eigen space associated to the mode-d unfold
-            [U{d},lambda{d}] = eigs(Ad*Ad','vector') ;
-            %[U{d},lambda{d}] = eigs(Ad*Ad',R(dd),'lm') ;
+            %[U{d},lambda{d}] = eigs(Cdd,min(R(dd),sz(d)),'lm') ;
+            [U{d},lambda{d}] = eig(Cdd,'vector') ;
             lambda{d} = sqrt(lambda{d}) ; % eigenvalues of Ad²
+        % left-eigenvectors
+            if ~leftEV % Ad = U*diag(l)*V' -> U = Ad*V*diag(1./l) ;
+                U{d} = Ad*U{d}*diag(1./lambda{d}) ;
+            end
         % Select the R dominant components if needed
             if R(dd)<sz(d) % truncate ?
                 [~,is] = sort(lambda{d},'descend') ;
@@ -628,7 +641,7 @@ methods (Static)
                 sz(d) = R(dd) ;
             end
         % reduce the signal tensor (at the end, A is the core tensor)
-            A = ESPRIT.refold(U{d}'*Ad,d,sz) ;
+            S = ESPRIT.refold(U{d}'*Ad,d,sz) ;
         end
     end
 end
